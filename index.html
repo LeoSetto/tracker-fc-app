@@ -922,6 +922,18 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
   background:rgba(35,209,139,.12);
 }
 .pitch-card.swapped{animation:pitchSwap .55s ease;}
+
+/* Pitch move button */
+.pitch-move-btn{
+  display:block;width:100%;margin-top:3px;
+  background:rgba(255,255,255,.08);border:none;border-radius:4px;
+  color:rgba(255,255,255,.5);font-size:10px;font-weight:700;
+  padding:2px 0;cursor:pointer;transition:.15s;font-family:var(--font-b);
+  letter-spacing:.3px;
+}
+.pitch-move-btn:hover{background:rgba(35,209,139,.2);color:var(--green);}
+.pitch-card:not(:hover) .pitch-move-btn{opacity:0;pointer-events:none;}
+.pitch-card:hover .pitch-move-btn{opacity:1;pointer-events:auto;}
 @keyframes pitchSwap{
   0%  {box-shadow:0 0 0 rgba(35,209,139,0);border-color:rgba(255,255,255,.18);}
   35% {box-shadow:0 0 22px rgba(35,209,139,.7);border-color:var(--green);}
@@ -4023,1348 +4035,436 @@ let activeSquadSection = 'roster';
 //  FIELD VIEW
 // ═══════════════════════════════════════════
 
-let currentView = 'list'; // 'list' | 'field'
-let fieldDragPid = null;
-let fieldDragSource = null; // 'pitch' | 'bench' | 'out'
+let currentView = 'list';
+let fieldDragSrcPid = null;
 
-// Formation layouts: each row is [count, yPct]
-// yPct: 0=top(attack) 100=bottom(GK)
-const FORMATION_LAYOUTS = {
-  '4-4-2':  [[2,.10],[4,.32],[4,.62],[1,.87]],
-  '4-3-3':  [[3,.10],[3,.35],[4,.63],[1,.87]],
-  '4-2-3-1':[[1,.08],[3,.28],[2,.52],[4,.72],[1,.88]],
-  '3-5-2':  [[2,.10],[3,.33],[5,.60],[1,.86]],
-  '3-4-3':  [[3,.10],[4,.35],[3,.63],[1,.87]],
-  '5-3-2':  [[2,.10],[3,.36],[5,.63],[1,.87]],
-  '5-4-1':  [[1,.10],[4,.33],[5,.62],[1,.87]],
-  '4-1-4-1':[[1,.08],[4,.28],[1,.48],[4,.68],[1,.87]],
-  '4-5-1':  [[1,.09],[5,.32],[4,.63],[1,.87]],
-};
-
-function parseFormation(tactic) {
-  if (!tactic) return null;
-  const match = tactic.match(/[\d]+(?:-[\d]+)+/);
-  if (!match) return null;
-  const key = match[0];
-  if (FORMATION_LAYOUTS[key]) return FORMATION_LAYOUTS[key];
-  // Build generic layout from numbers
-  const parts = key.split('-').map(Number).reverse(); // GK first
-  const total  = parts.reduce((a,b) => a+b, 0);
-  const yStep  = 0.85 / (parts.length);
-  return parts.map((cnt, i) => [cnt, 0.88 - i * yStep]);
+// ── Category: 0=GK 1=DEF 2=MID 3=ATT
+function posCategory(pos) {
+  const p = (pos || '').toUpperCase();
+  if (/^GOL|^GK|^GR/.test(p))                           return 0;
+  if (/^ZAG|^CB|^LD$|^LE$|^RB$|^LB$|RWB|LWB|^ALA/.test(p)) return 1;
+  if (/^VOL|^CDM|^MC$|^CM$|^MEI|^CAM|^AM$|^MD$|^ME$|^RM$|^LM$/.test(p)) return 2;
+  if (/^ATA|^ST$|^CF$|^CA$|^SA$|^PD$|^PE$|^RW$|^LW$|^F9/.test(p)) return 3;
+  const lo = pos.toLowerCase();
+  if (/lat|back|def|zag/.test(lo)) return 1;
+  if (/vol|mid|meio|cen|mei/.test(lo)) return 2;
+  if (/ata|for|wing|ponta|strik|falso/.test(lo)) return 3;
+  return 2;
 }
 
-function getRoleStyle(role) {
+// ── X-order hint within a line (lower = left)
+const X_HINT = {
+  LE:1,LB:1,LWB:1,PE:1,LW:1,ME:1,AE:1,
+  ZAG:5,CB:5,CDM:5,VOL:5,MC:5,CM:5,MEI:5,CAM:5,AM:5,ATA:5,ST:5,CF:5,CA:5,SA:5,GOL:5,GK:5,
+  MD:7,RM:7,PD:7,RW:7,AD:7,
+  LD:9,RB:9,RWB:9,
+};
+function xHint(pos) {
+  const u = (pos||'').toUpperCase();
+  if (X_HINT[u] !== undefined) return X_HINT[u];
+  const lo = pos.toLowerCase();
+  if (/^le|left|esq/.test(lo)) return 1;
+  if (/^ld|right|dir/.test(lo)) return 9;
+  return 5;
+}
+
+// ── Build formation lines from tactic string
+// Returns [lineSizes] front-to-back (DEF first like "4-3-3" means def=4,mid=3,att=3)
+function parseTacticLines(tactic) {
+  if (!tactic) return null;
+  const m = tactic.match(/\d+(?:-\d+)+/);
+  if (!m) return null;
+  return m[0].split('-').map(Number); // [def, mid*, att]
+}
+
+// ── Group players by category, assign to lines
+function buildLineAssignments(starters, lineSizes) {
+  const gks  = starters.filter(p => posCategory(p.position) === 0);
+  const defs = starters.filter(p => posCategory(p.position) === 1);
+  const mids = starters.filter(p => posCategory(p.position) === 2);
+  const atts = starters.filter(p => posCategory(p.position) === 3);
+
+  // lineSizes: [def_count, ...mid_counts..., att_count]
+  // We'll build lines from ATT (top) to DEF (bottom)
+  const n = lineSizes.length;
+  const lines = [];
+
+  if (n >= 2) {
+    // Last entry in lineSizes = attack count, first = defense count
+    // Reversed: lines[0]=ATT, lines[n-1]=DEF
+    const reversed = [...lineSizes].reverse(); // [att, ...mids..., def]
+    const attCount  = reversed[0];
+    const defCount  = reversed[n - 1];
+    const midCounts = reversed.slice(1, n - 1);
+
+    lines.push(sortByX(atts).slice(0, attCount));
+    let midOffset = 0;
+    midCounts.forEach(cnt => {
+      lines.push(sortByX(mids).slice(midOffset, midOffset + cnt));
+      midOffset += cnt;
+    });
+    lines.push(sortByX(defs).slice(0, defCount));
+  } else {
+    lines.push(sortByX([...atts, ...mids, ...defs]));
+  }
+
+  return { lines, gks };
+}
+
+function sortByX(players) {
+  return [...players].sort((a, b) => xHint(a.position) - xHint(b.position));
+}
+
+// ── Evenly distributed X positions for N players (8%–92%)
+function spreadX(n) {
+  if (n === 1) return [50];
+  return Array.from({ length: n }, (_, i) => 8 + (84 / (n - 1)) * i);
+}
+
+// ── Y positions for each outfield line (top=ATT 8%  bottom=DEF 80%)  GK=91%
+function lineYs(numLines) {
+  if (numLines === 1) return [44];
+  return Array.from({ length: numLines }, (_, i) =>
+    8 + (72 / (numLines - 1)) * i
+  );
+}
+
+// ── Build role badge label
+function roleBadge(role) {
   const map = {
-    crucial:   { cls:'role-crucial',   bg:'rgba(240,79,94,.2)',   color:'var(--red)'   },
-    important: { cls:'role-important', bg:'rgba(35,209,139,.15)', color:'var(--green)' },
-    sporadic:  { cls:'role-sporadic',  bg:'rgba(255,255,255,.07)',color:'var(--t3)'    },
-    prospect:  { cls:'role-prospect',  bg:'rgba(79,158,255,.15)', color:'var(--blue)'  },
-    rotation:  { cls:'role-rotation',  bg:'rgba(245,183,49,.15)', color:'var(--yellow)'},
+    crucial:  { label:'CRUC', bg:'rgba(240,79,94,.25)',   color:'var(--red)'   },
+    important:{ label:'IMP',  bg:'rgba(35,209,139,.2)',   color:'var(--green)' },
+    sporadic: { label:'ESP',  bg:'rgba(200,200,200,.12)', color:'var(--t3)'    },
+    prospect: { label:'PROM', bg:'rgba(79,158,255,.2)',   color:'var(--blue)'  },
+    rotation: { label:'ROT',  bg:'rgba(245,183,49,.18)',  color:'var(--yellow)'},
   };
   return map[role] || null;
 }
 
 function getPosColor(pos) {
-  const p = (pos||'').toUpperCase();
-  if (/GOL|GK/.test(p)) return { bg:'rgba(255,165,0,.25)', color:'#ffaa33' };
-  if (/ZAG|CB|LD|LE|RB|LB|RWB|LWB|ALA/.test(p)) return { bg:'rgba(79,158,255,.25)', color:'var(--blue)' };
-  if (/VOL|CDM|MC|CM|MEI|CAM|MD|ME|RM|LM/.test(p)) return { bg:'rgba(35,209,139,.2)', color:'var(--green)' };
-  return { bg:'rgba(240,79,94,.2)', color:'var(--red)' };
+  switch (posCategory(pos)) {
+    case 0: return { bg:'rgba(255,165,0,.28)',   color:'#ffb347' };
+    case 1: return { bg:'rgba(79,158,255,.28)',  color:'var(--blue)' };
+    case 2: return { bg:'rgba(35,209,139,.22)',  color:'var(--green)' };
+    default:return { bg:'rgba(240,79,94,.22)',   color:'var(--red)' };
+  }
 }
 
-function buildPitchCard(p) {
-  const posC    = getPosColor(p.position);
-  const roleS   = getRoleStyle(p.role);
-  const ovrHtml = p.overall ? `<div class="pitch-ovr">${p.overall}</div>` : '';
-  const roleHtml= roleS ? `<div class="pitch-role" style="background:${roleS.bg};color:${roleS.color}">${roleS.cls.replace('role-','').toUpperCase().slice(0,4)}</div>` : '';
-  const lastName = p.name.includes('.') ? p.name : (p.name.split(' ').pop() || p.name);
+function buildPitchCard(p, idx) {
+  const pc   = getPosColor(p.position);
+  const rb   = roleBadge(p.role);
+  const ovr  = p.overall ? `<div class="pitch-ovr">${p.overall}</div>` : '';
+  const role = rb ? `<div class="pitch-role" style="background:${rb.bg};color:${rb.color}">${rb.label}</div>` : '';
+  // Shorten name: use last name or abbreviation
+  const nameParts = p.name.trim().split(/[\s.]+/);
+  const shortName = nameParts.length > 1
+    ? nameParts[nameParts.length - 1]
+    : (p.name.length > 8 ? p.name.slice(0, 7) + '.' : p.name);
   return `
-    <div class="pitch-pos" style="background:${posC.bg};color:${posC.color}">${p.position}</div>
-    ${ovrHtml}
-    <div class="pitch-name">${lastName}</div>
-    ${roleHtml}
+    <div class="pitch-pos" style="background:${pc.bg};color:${pc.color}">${p.position}</div>
+    ${ovr}
+    <div class="pitch-name">${shortName}</div>
+    ${role}
   `;
 }
 
-function renderFieldView() {
-  const sv = getSave(); if (!sv) return;
-  const squad = getSquad(sv);
-  const canvas = document.getElementById('pitch-canvas');
-  const benchRow = document.getElementById('field-bench-row');
-  const outRow   = document.getElementById('field-out-row');
-  if (!canvas) return;
+// ── Create and place one pitch spot
+function makePitchSpot(player, xPct, yPct, allStarters) {
+  const el = document.createElement('div');
+  el.className = 'pitch-player';
+  el.style.left = xPct.toFixed(1) + '%';
+  el.style.top  = yPct.toFixed(1) + '%';
 
-  const starters = sortSquadPlayers(squad.players.filter(p => p.group==='starter'));
-  const bench    = sortSquadPlayers(squad.players.filter(p => p.group==='bench'));
-  const out      = sortSquadPlayers(squad.players.filter(p => p.group==='out'));
+  if (player) {
+    el.dataset.pid   = player.id;
+    el.dataset.group = 'starter';
+    el.draggable = true;
 
-  const formation = parseFormation(getSquad(sv).tactic);
-  // height is set via aspect-ratio CSS — no JS height needed
+    el.innerHTML = `
+      <div class="pitch-card" id="pc-${player.id}">
+        ${buildPitchCard(player)}
+        <button class="pitch-move-btn" data-pid="${player.id}" title="${t('move-to')}">⇄</button>
+      </div>`;
 
-  // Remove old pitch players
-  canvas.querySelectorAll('.pitch-player').forEach(el => el.remove());
-
-  // Canvas dragover fallback
-  canvas.ondragover = e => e.preventDefault();
-  canvas.ondrop     = e => { e.preventDefault(); }; // drop on empty canvas = no-op
-
-  // Place starters on pitch using formation layout
-  if (formation) {
-    let si = 0;
-    formation.forEach(([count, yPct]) => {
-      for (let i = 0; i < count; i++) {
-        const player = starters[si] || null;
-        si++;
-        const xPct = count === 1 ? 0.5 : 0.1 + (0.8 / (count-1||1)) * i;
-        const spot = document.createElement('div');
-        spot.className = 'pitch-player';
-        spot.style.left = (xPct * 100) + '%';
-        spot.style.top  = (yPct * 100) + '%';
-
-        if (player) {
-          spot.dataset.pid = player.id;
-          spot.dataset.group = 'starter';
-          spot.innerHTML = `<div class="pitch-card">${buildPitchCard(player)}</div>`;
-          spot.draggable = true;
-          addPitchDragEvents(spot);
-        } else {
-          spot.innerHTML = `<div class="pitch-empty-slot"><span>${t('field-empty-slot')}</span></div>`;
-          addDropTargetEvents(spot, 'starter');
-        }
-        canvas.appendChild(spot);
-      }
+    // ── Native drag events
+    el.addEventListener('dragstart', e => {
+      fieldDragSrcPid = player.id;
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', player.id);
     });
+    el.addEventListener('dragend', () => {
+      fieldDragSrcPid = null;
+      el.classList.remove('dragging');
+      document.querySelectorAll('.pitch-card.drop-target').forEach(c => c.classList.remove('drop-target'));
+    });
+    el.addEventListener('dragover', e => {
+      e.preventDefault(); e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      document.getElementById('pc-' + player.id)?.classList.add('drop-target');
+    });
+    el.addEventListener('dragleave', e => {
+      if (!el.contains(e.relatedTarget))
+        document.getElementById('pc-' + player.id)?.classList.remove('drop-target');
+    });
+    el.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      document.getElementById('pc-' + player.id)?.classList.remove('drop-target');
+      const srcId = e.dataTransfer.getData('text/plain') || fieldDragSrcPid;
+      if (!srcId || srcId === player.id) return;
+      doFieldSwap(srcId, player.id);
+    });
+
+    // ── Touch events (mobile)
+    el.addEventListener('touchstart', e => {
+      fieldDragSrcPid = player.id;
+      el.classList.add('dragging');
+    }, { passive: true });
+    el.addEventListener('touchend', () => {
+      el.classList.remove('dragging');
+    }, { passive: true });
+
+    // ── Move button → open swap modal from the system
+    el.addEventListener('click', e => {
+      if (!e.target.closest('.pitch-move-btn')) return;
+      openPitchSwapMenu(player.id, allStarters);
+    });
+
   } else {
-    // No formation: grid layout
-    starters.forEach((p, i) => {
-      const cols = Math.ceil(Math.sqrt(starters.length));
-      const xPct = 0.1 + (0.8 / (cols-1||1)) * (i % cols);
-      const yPct = 0.12 + 0.25 * Math.floor(i / cols);
-      const spot = document.createElement('div');
-      spot.className = 'pitch-player';
-      spot.style.left = (xPct*100)+'%';
-      spot.style.top  = (yPct*100)+'%';
-      spot.dataset.pid = p.id;
-      spot.dataset.group = 'starter';
-      spot.innerHTML = `<div class="pitch-card">${buildPitchCard(p)}</div>`;
-      spot.draggable = true;
-      addPitchDragEvents(spot);
-      canvas.appendChild(spot);
+    // Empty slot
+    el.innerHTML = `<div class="pitch-empty-slot" data-empty="1"><span>${t('field-empty-slot')}</span></div>`;
+    el.addEventListener('dragover', e => { e.preventDefault(); el.querySelector('.pitch-empty-slot')?.classList.add('drop-target'); });
+    el.addEventListener('dragleave', () => el.querySelector('.pitch-empty-slot')?.classList.remove('drop-target'));
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      el.querySelector('.pitch-empty-slot')?.classList.remove('drop-target');
+      // Drop on empty: move dragged player to starter (already a starter — just re-render)
+      renderFieldView();
     });
   }
-
-  // Bench row
-  benchRow.innerHTML = '';
-  bench.forEach(p => benchRow.appendChild(buildSubCard(p, 'bench')));
-  if (!bench.length) benchRow.innerHTML = `<div style="color:var(--t3);font-size:12px;font-style:italic">Sem jogadores no banco</div>`;
-
-  // Out row
-  outRow.innerHTML = '';
-  out.forEach(p => outRow.appendChild(buildSubCard(p, 'out')));
-  if (!out.length) outRow.innerHTML = `<div style="color:var(--t3);font-size:12px;font-style:italic">Sem jogadores</div>`;
+  return el;
 }
 
-function buildSubCard(p, group) {
-  const posC  = getPosColor(p.position);
-  const card  = document.createElement('div');
-  card.className = 'field-sub-card';
-  card.dataset.pid   = p.id;
-  card.dataset.group = group;
-  card.draggable = true;
-  card.innerHTML = `
-    <div class="pitch-pos" style="background:${posC.bg};color:${posC.color};font-size:9px;padding:1px 5px">${p.position}</div>
+// ── Swap two starters (by pid) and re-render
+function doFieldSwap(pid1, pid2) {
+  const sv = getSave(); if (!sv) return;
+  const squad = getSquad(sv);
+  const p1 = squad.players.find(p => p.id === pid1);
+  const p2 = squad.players.find(p => p.id === pid2);
+  if (!p1 || !p2) return;
+  if (p1.group !== 'starter' || p2.group !== 'starter') {
+    // Cross-group swap: use existing movePlayer logic via openSwapModal
+    openSwapModal(pid1, p2.group, squad);
+    return;
+  }
+  // Both starters: just swap their positions (visual only — no group change needed)
+  // Re-render will naturally reorder; for UX just show flash
+  save();
+  renderFieldView();
+  requestAnimationFrame(() => {
+    [pid1, pid2].forEach(pid => {
+      const card = document.getElementById('pc-' + pid);
+      if (card) {
+        card.classList.add('swapped');
+        card.addEventListener('animationend', () => card.classList.remove('swapped'), { once: true });
+      }
+    });
+  });
+  const sq = getSquad(sv);
+  const n1 = sq.players.find(p => p.id === pid1)?.name || '';
+  const n2 = sq.players.find(p => p.id === pid2)?.name || '';
+  toast(`⇄ ${n1} ↔ ${n2}`);
+}
+
+// ── Move button: open a compact swap menu for a pitch player
+function openPitchSwapMenu(pid, allStarters) {
+  const sv = getSave(); if (!sv) return;
+  const squad = getSquad(sv);
+  // Reuse the existing swap modal with all other starters + bench as options
+  openSwapModal(pid, 'bench', squad);
+}
+
+// ── Sub card drag (bench/out → pitch)
+function makeSubCard(p, group) {
+  const pc  = getPosColor(p.position);
+  const el  = document.createElement('div');
+  el.className   = 'field-sub-card';
+  el.dataset.pid   = p.id;
+  el.dataset.group = group;
+  el.draggable = true;
+  el.innerHTML = `
+    <div class="pitch-pos" style="background:${pc.bg};color:${pc.color};font-size:9px;padding:1px 5px">${p.position}</div>
     ${p.overall ? `<span class="ovr-badge" style="font-size:11px">${p.overall}</span>` : ''}
     <div class="field-sub-card-info">
       <div class="field-sub-card-name">${p.name}</div>
       <div class="field-sub-card-meta">${p.role ? p.role : ''}</div>
     </div>
   `;
-  addSubDragEvents(card);
-  return card;
-}
 
-// ── Drag & Drop for pitch players
-function addPitchDragEvents(el) {
   el.addEventListener('dragstart', e => {
-    fieldDragPid    = el.dataset.pid;
-    fieldDragSource = el.dataset.group || 'starter';
+    fieldDragSrcPid = p.id;
     el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', p.id);
   });
   el.addEventListener('dragend', () => {
+    fieldDragSrcPid = null;
     el.classList.remove('dragging');
-    fieldDragPid = null; fieldDragSource = null;
-    document.querySelectorAll('.drop-target,.drag-over').forEach(x => {
-      x.classList.remove('drop-target'); x.classList.remove('drag-over');
-    });
-  });
-  el.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); el.querySelector('.pitch-card')?.classList.add('drop-target'); });
-  el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.querySelector('.pitch-card')?.classList.remove('drop-target'); });
-  el.addEventListener('drop', e => {
-    e.preventDefault();
-    e.stopPropagation();
-    el.querySelector('.pitch-card')?.classList.remove('drop-target');
-    if (!fieldDragPid || fieldDragPid === el.dataset.pid) return;
-    doFieldSwap(fieldDragPid, fieldDragSource, el.dataset.pid, el.dataset.group || 'starter');
-  });
-}
-
-// ── Drop events for empty pitch slots
-function addDropTargetEvents(slotEl, targetGroup) {
-  slotEl.addEventListener('dragover', e => { e.preventDefault(); slotEl.querySelector('.pitch-empty-slot')?.classList.add('drop-target'); });
-  slotEl.addEventListener('dragleave', () => slotEl.querySelector('.pitch-empty-slot')?.classList.remove('drop-target'));
-  slotEl.addEventListener('drop', e => {
-    e.preventDefault();
-    slotEl.querySelector('.pitch-empty-slot')?.classList.remove('drop-target');
-    if (!fieldDragPid) return;
-    const sv = getSave(); if (!sv) return;
-    const squad = getSquad(sv);
-    const p = squad.players.find(x => x.id === fieldDragPid);
-    if (p) { p.group = 'starter'; save(); renderSquad(); renderFieldView(); }
-  });
-}
-
-// ── Drag events for sub cards
-function addSubDragEvents(el) {
-  el.addEventListener('dragstart', e => {
-    fieldDragPid    = el.dataset.pid;
-    fieldDragSource = el.dataset.group;
-    el.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-  });
-  el.addEventListener('dragend', () => {
-    el.classList.remove('dragging');
-    fieldDragPid = null; fieldDragSource = null;
     document.querySelectorAll('.drag-over').forEach(x => x.classList.remove('drag-over'));
   });
   el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
-  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+  el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over'); });
   el.addEventListener('drop', e => {
     e.preventDefault();
     el.classList.remove('drag-over');
-    if (!fieldDragPid || fieldDragPid === el.dataset.pid) return;
-    doFieldSwap(fieldDragPid, fieldDragSource, el.dataset.pid, el.dataset.group);
+    const srcId = e.dataTransfer.getData('text/plain') || fieldDragSrcPid;
+    if (!srcId || srcId === p.id) return;
+    // Swap: src goes to this player's group, this player goes to src's group
+    const sv2 = getSave(); if (!sv2) return;
+    const sq  = getSquad(sv2);
+    const src  = sq.players.find(x => x.id === srcId);
+    const dest = sq.players.find(x => x.id === p.id);
+    if (!src || !dest) return;
+    const tmp    = src.group;
+    src.group    = dest.group;
+    dest.group   = tmp;
+    save(); renderSquad(); renderFieldView();
+    toast(`⇄ ${src.name} ↔ ${dest.name}`);
   });
+
+  return el;
 }
 
-// ── Core swap logic for field view
-function doFieldSwap(pid1, group1, pid2, group2) {
+// ── Main render function
+function renderFieldView() {
   const sv = getSave(); if (!sv) return;
-  const squad = getSquad(sv);
-  const p1 = squad.players.find(p => p.id === pid1);
-  const p2 = squad.players.find(p => p.id === pid2);
-  if (!p1 || !p2) return;
+  const squad    = getSquad(sv);
+  const canvas   = document.getElementById('pitch-canvas');
+  const benchRow = document.getElementById('field-bench-row');
+  const outRow   = document.getElementById('field-out-row');
+  if (!canvas || !benchRow || !outRow) return;
 
-  // Check limits
-  const benchCount = squad.players.filter(p=>p.group==='bench'&&p.id!==pid1&&p.id!==pid2).length;
-  const outCount   = squad.players.filter(p=>p.group==='out'  &&p.id!==pid1&&p.id!==pid2).length;
-  if (group1==='starter' && group2==='bench' && benchCount>=BENCH_MAX) { toast(t('toast-bench-full'),'err'); return; }
-  if (group1==='starter' && group2==='out'   && outCount  >=OUT_MAX  ) { toast(t('toast-out-full'),'err');   return; }
+  const starters = sortSquadPlayers(squad.players.filter(p => p.group === 'starter'));
+  const bench    = sortSquadPlayers(squad.players.filter(p => p.group === 'bench'));
+  const out      = sortSquadPlayers(squad.players.filter(p => p.group === 'out'));
 
-  p1.group = group2;
-  p2.group = group1;
-  save();
-  renderSquad();
-  renderFieldView();
-  toast(`⇄ ${p1.name} ↔ ${p2.name}`);
+  // Clear canvas players
+  canvas.querySelectorAll('.pitch-player').forEach(el => el.remove());
+  canvas.ondragover = e => e.preventDefault();
+  canvas.ondrop     = e => e.preventDefault();
 
-  // Flash animation
-  requestAnimationFrame(() => {
-    [pid1, pid2].forEach((pid, idx) => {
-      const cards = document.querySelectorAll(`[data-pid="${pid}"] .pitch-card, [data-pid="${pid}"].field-sub-card`);
-      cards.forEach(c => {
-        c.classList.add('swapped');
-        c.addEventListener('animationend', () => c.classList.remove('swapped'), { once: true });
+  const tactic = getSquad(sv).tactic;
+  const lineSizes = parseTacticLines(tactic); // e.g. [4,3,3] for 4-3-3
+
+  if (lineSizes && starters.length > 0) {
+    const { lines, gks } = buildLineAssignments(starters, lineSizes);
+    const ys = lineYs(lines.length);
+
+    lines.forEach((linePlayers, li) => {
+      const xs = spreadX(Math.max(linePlayers.length, 1));
+      linePlayers.forEach((p, pi) => {
+        canvas.appendChild(makePitchSpot(p, xs[pi], ys[li], starters));
       });
     });
-  });
-}
 
-// ── View toggle setup
-function setupViewToggle() {
-  document.querySelectorAll('.view-toggle-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      currentView = btn.dataset.view;
-      document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
-      const listEl  = document.getElementById('list-view');
-      const fieldEl = document.getElementById('field-view');
-      if (currentView === 'list') {
-        fieldEl.style.display = 'none';
-        listEl.style.display  = '';
-      } else {
-        listEl.style.display  = 'none';
-        fieldEl.style.display = 'block';
-        // Double rAF ensures layout is computed after display change
-        requestAnimationFrame(() => requestAnimationFrame(() => renderFieldView()));
-      }
-    });
-  });
-}
+    // GK always at bottom center
+    const gkPlayer = gks[0] || null;
+    canvas.appendChild(makePitchSpot(gkPlayer, 50, 91, starters));
 
-function setupSquadSectionTabs() {
-  document.querySelectorAll('#squad-section-tabs .squad-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      activeSquadSection = btn.dataset.section;
-      document.querySelectorAll('#squad-section-tabs .squad-tab').forEach(b =>
-        b.classList.toggle('active', b.dataset.section === activeSquadSection));
-      ['roster','base','analysis'].forEach(sec => {
-        const el = document.getElementById(`squad-section-${sec}`);
-        if (el) el.style.display = sec === activeSquadSection ? '' : 'none';
+  } else if (starters.length > 0) {
+    // Fallback: group by category, no formation
+    const groups = [3, 2, 1, 0].map(cat =>
+      starters.filter(p => posCategory(p.position) === cat).sort((a,b) => xHint(a.position)-xHint(b.position))
+    ).filter(g => g.length);
+    const ys2 = lineYs(groups.length);
+    groups.forEach((g, gi) => {
+      spreadX(g.length).forEach((xp, pi) => {
+        canvas.appendChild(makePitchSpot(g[pi], xp, ys2[gi], starters));
       });
-      if (activeSquadSection === 'base')     renderBaseSquad();
-      if (activeSquadSection === 'analysis') { renderCoach(); setupCoachSubTabs(); }
     });
+  } else {
+    canvas.innerHTML += `<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:rgba(255,255,255,.3);font-size:13px;text-align:center">${t('group-empty')}</div>`;
+  }
+
+  // Bench
+  benchRow.innerHTML = '';
+  bench.forEach(p => benchRow.appendChild(makeSubCard(p, 'bench')));
+  if (!bench.length) benchRow.innerHTML = `<div style="color:var(--t3);font-size:12px;font-style:italic">${t('group-empty')}</div>`;
+
+  // Out
+  outRow.innerHTML = '';
+  out.forEach(p => outRow.appendChild(makeSubCard(p, 'out')));
+  if (!out.length) outRow.innerHTML = `<div style="color:var(--t3);font-size:12px;font-style:italic">${t('group-empty')}</div>`;
+}
+
+
+
+// ═══════════════════════════════════════════
+//  SQUAD AUTO-SORT
+// ═══════════════════════════════════════════
+const BENCH_MAX = 9;
+const OUT_MAX   = 20;
+const BASE_MAX  = 40;
+
+const POS_ORDER = {
+  'GOL':1,'GK':1,'GR':1,
+  'ZAG':2,'CB':2,'DC':2,
+  'LD':3,'RB':3,'DR':3,
+  'LE':4,'LB':4,'DL':4,
+  'RWB':5,'LWB':6,'ALA':5,
+  'VOL':7,'CDM':7,'MDF':7,'DM':7,
+  'MC':8,'CM':8,'MO':8,
+  'MEI':9,'CAM':9,'SS':9,'AM':9,
+  'MD':10,'RM':10,'MR':10,
+  'ME':11,'LM':11,'ML':11,
+  'PD':12,'RW':12,'AD':12,
+  'PE':13,'LW':13,'AE':13,
+  'ATA':14,'ST':14,'CF':14,'CA':14,
+  'SA':15,'F9':15,
+};
+function getPosOrder(pos) {
+  if (!pos) return 99;
+  const u = pos.toUpperCase();
+  if (POS_ORDER[u] !== undefined) return POS_ORDER[u];
+  const p = pos.toLowerCase();
+  if (/gol|gk|keep/.test(p))        return 1;
+  if (/zag|back|def|late|ala/.test(p)) return 3;
+  if (/ponta|rw|lw|wing(?!b)/.test(p)) return 12;
+  if (/ata|strik|for|falso|f9/.test(p)) return 14;
+  return 8;
+}
+function sortSquadPlayers(players) {
+  return [...players].sort((a,b) => {
+    const d = getPosOrder(a.position) - getPosOrder(b.position);
+    return d !== 0 ? d : (b.overall||0) - (a.overall||0);
   });
 }
 
-// ═══════════════════════════════════════════
-//  BASE SQUAD
-// ═══════════════════════════════════════════
-const BASE_MAX = 40;
+function getSquad(sv) {
+  if (!sv.squad) sv.squad = { tactic:'', players:[] };
+  return sv.squad;
+}
 
 function getBase(sv) {
   if (!sv.base) sv.base = [];
   return sv.base;
 }
 
-let baseSecPos = [];
-
-function renderBaseSquad() {
-  const sv = getSave();
-  const el = document.getElementById('base-player-list');
-  const dash = document.getElementById('base-dashboard');
-  if (!el) return;
-  if (!sv) { el.innerHTML = '<div style="color:var(--t3);font-size:13px">Nenhum save ativo.</div>'; return; }
-
-  const base = getBase(sv);
-
-  // Mini dashboard — use max potential for averages
-  const total  = base.length;
-  const avgOvr = total ? Math.round(base.reduce((a,p) => a+(p.overall||0), 0) / total) : 0;
-  const getMaxPot = p => p.potential?.max ?? (typeof p.potential==='number' ? p.potential : 0);
-  const avgPot = total ? Math.round(base.reduce((a,p) => a+getMaxPot(p), 0) / total) : 0;
-  const avgAge = total ? Math.round(base.reduce((a,p) => a+(p.age||0), 0) / total) : 0;
-  const gems   = base.filter(p => getMaxPot(p) >= 80).length;
-  dash.innerHTML = [
-    `<div class="stat c-green"><div class="stat-val">${total}<span style="font-size:11px;color:var(--t3)">${BASE_MAX}</span></div><div class="stat-lbl">Jogadores</div></div>`,
-    total ? `<div class="stat"><div class="stat-val">${avgOvr}</div><div class="stat-lbl">OVR Médio</div></div>` : '',
-    total ? `<div class="stat c-blue"><div class="stat-val">${avgPot}</div><div class="stat-lbl">POT Médio</div></div>` : '',
-    total ? `<div class="stat"><div class="stat-val">${avgAge}</div><div class="stat-lbl">Idade Média</div></div>` : '',
-    gems  ? `<div class="stat c-yellow"><div class="stat-val">${gems}</div><div class="stat-lbl">Jóias (80+)</div></div>` : '',
-  ].join('');
-
-  if (!base.length) {
-    el.innerHTML = `<div style="color:var(--t3);font-size:13px;text-align:center;padding:20px;font-style:italic">Nenhum jogador na base. Clique em "+ Jogador" para adicionar.</div>`;
-    return;
-  }
-
-  // Sort: higher overall first, then younger
-  const sorted = [...base].sort((a,b) => {
-    const ovrDiff = (b.overall||0) - (a.overall||0);
-    return ovrDiff !== 0 ? ovrDiff : (a.age||99) - (b.age||99);
-  });
-
-  el.innerHTML = sorted.map(p => {
-    const secPos = (p.secPos||[]).map(s => `<span class="sec-pos-tag">${s}</span>`).join('');
-    // Potential badge — show range if available
-    const potLabel = (() => {
-      const pot = p.potential;
-      if (!pot) return null;
-      if (typeof pot === 'object' && pot.min != null && pot.max != null) {
-        return pot.min === pot.max ? `${pot.max}` : `${pot.min}–${pot.max}`;
-      }
-      if (typeof pot === 'number') return `${pot}`;
-      return null;
-    })();
-    const pot    = potLabel ? `<span class="base-pot" title="Potencial">${potLabel}</span>` : '';
-    const val    = p.value    ? `<span class="base-value">${p.value}M€</span>` : '';
-    const age    = p.age      ? `<span class="base-age">${p.age}a</span>` : '';
-    return `<div class="base-card">
-      ${p.overall ? `<span class="ovr-badge">${p.overall}</span>` : ''}
-      ${pot}
-      <div class="base-info">
-        <div class="base-name">${p.name}</div>
-        <div class="base-meta">${p.position}${p.secPos?.length ? ' · ' : ''}
-          <span class="sec-pos-wrap" style="display:inline-flex;gap:3px">${secPos}</span>
-        </div>
-      </div>
-      ${age}${val}
-      <button class="pact" onclick="openEditBasePlayer('${p.id}')" title="Editar">✏️</button>
-      <button class="pact del" onclick="removeBasePlayer('${p.id}')" title="Remover">✕</button>
-    </div>`;
-  }).join('');
-}
-
-function openEditBasePlayer(pid) {
-  const sv = getSave(); if (!sv) return;
-  const p  = getBase(sv).find(x => x.id === pid);
-  if (!p) return;
-  document.getElementById('base-modal-title').textContent = '✏️ Editar Jogador da Base';
-  document.getElementById('base-player-edit-id').value    = pid;
-  document.getElementById('base-player-name').value       = p.name;
-  document.getElementById('base-player-pos').value        = p.position || '';
-  document.getElementById('base-player-age').value        = p.age      || '';
-  document.getElementById('base-player-ovr').value        = p.overall  || '';
-  document.getElementById('base-player-pot-min').value    = p.potential?.min ?? p.potential ?? '';
-  document.getElementById('base-player-pot-max').value    = p.potential?.max ?? '';
-  document.getElementById('base-player-value').value      = p.value    || '';
-  baseSecPos = [...(p.secPos||[])];
-  document.querySelectorAll('#base-sec-pos-tg .tb').forEach(b =>
-    b.classList.toggle('on', baseSecPos.includes(b.dataset.pos)));
-  initBasePosTg(sv, p.secPos||[]);
-  openModal('modal-add-base-player');
-}
-window.openEditBasePlayer = openEditBasePlayer;
-
-function removeBasePlayer(pid) {
-  const sv = getSave(); if (!sv) return;
-  if (!confirm('Remover este jogador da base?')) return;
-  sv.base = (sv.base||[]).filter(p => p.id !== pid);
-  save(); renderBaseSquad();
-  toast('Jogador removido da base.', 'err');
-}
-window.removeBasePlayer = removeBasePlayer;
-
-function setupBaseEvents() {
-  // Open add base player modal
-  document.getElementById('btn-add-base-player').addEventListener('click', () => {
-    const sv = getSave();
-    if (!sv) { toast(t('toast-need-save'), 'err'); return; }
-    if (getBase(sv).length >= BASE_MAX) { toast(`Base cheia! Máximo ${BASE_MAX} jogadores.`, 'err'); return; }
-    document.getElementById('base-modal-title').textContent = '🌱 Adicionar Jogador da Base';
-    document.getElementById('base-player-edit-id').value = '';
-    ['base-player-name','base-player-age','base-player-ovr','base-player-pot-min','base-player-pot-max','base-player-value'].forEach(id =>
-      document.getElementById(id).value = '');
-    document.getElementById('base-player-pos').value = '';
-    baseSecPos = [];
-    document.querySelectorAll('#base-sec-pos-tg .tb').forEach(b => b.classList.remove('on'));
-    initBasePosTg(sv, []);
-    openModal('modal-add-base-player');
-  });
-
-  // Secondary pos toggles in base modal (multi-select, max 6)
-  document.querySelectorAll('#base-sec-pos-tg .tb').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const pos = btn.dataset.pos;
-      if (baseSecPos.includes(pos)) {
-        baseSecPos = baseSecPos.filter(p => p !== pos);
-        btn.classList.remove('on');
-      } else if (baseSecPos.length < 6) {
-        baseSecPos.push(pos);
-        btn.classList.add('on');
-      } else {
-        toast('Máximo 6 posições secundárias.', 'err');
-      }
-    });
-  });
-
-  // Confirm base player
-  document.getElementById('btn-confirm-base-player').addEventListener('click', () => {
-    const sv = getSave(); if (!sv) return;
-    const name = document.getElementById('base-player-name').value.trim();
-    if (!name) { toast('Digite o nome do jogador.', 'err'); return; }
-    const pos  = document.getElementById('base-player-pos').value;
-    if (!pos) { toast('Selecione a posição.', 'err'); return; }
-
-    const editId = document.getElementById('base-player-edit-id').value;
-    const potMin = parseInt(document.getElementById('base-player-pot-min').value) || null;
-    const potMax = parseInt(document.getElementById('base-player-pot-max').value) || null;
-    // Validate range
-    if (potMin && potMax && potMin > potMax) {
-      toast('Potencial mínimo não pode ser maior que o máximo.', 'err'); return;
-    }
-    const potential = (potMin || potMax)
-      ? { min: potMin || potMax, max: potMax || potMin }
-      : null;
-
-    const data = {
-      id:        editId || uid(),
-      name,
-      position:  pos,
-      age:       parseInt(document.getElementById('base-player-age').value)   || null,
-      overall:   parseInt(document.getElementById('base-player-ovr').value)   || null,
-      potential,
-      value:     parseFloat(document.getElementById('base-player-value').value) || null,
-      secPos:    [...document.querySelectorAll('#base-sec-pos-tg [data-pos].on')].map(b=>b.dataset.pos).slice(0,6),
-    };
-
-    const base = getBase(sv);
-    if (editId) {
-      const idx = base.findIndex(p => p.id === editId);
-      if (idx >= 0) base[idx] = data;
-    } else {
-      if (base.length >= BASE_MAX) { toast(`Base cheia! Máximo ${BASE_MAX} jogadores.`, 'err'); return; }
-      base.push(data);
-    }
-
-    save();
-    closeModal('modal-add-base-player');
-    renderBaseSquad();
-    toast(editId ? `${name} atualizado!` : `${name} adicionado à base!`);
-  });
-
-  document.getElementById('base-player-name').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('btn-confirm-base-player').click();
-  });
-}
-
-// ═══════════════════════════════════════════
-//  SECONDARY POSITIONS FOR SQUAD PLAYERS
-// ═══════════════════════════════════════════
-let editSecPos = [];
-
-function setupEditSecPosEvents() {
-  document.querySelectorAll('#edit-sec-pos-tg .tb').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const pos = btn.dataset.pos;
-      if (editSecPos.includes(pos)) {
-        editSecPos = editSecPos.filter(p => p !== pos);
-        btn.classList.remove('on');
-      } else if (editSecPos.length < 6) {
-        editSecPos.push(pos);
-        btn.classList.add('on');
-      } else {
-        toast('Máximo 6 posições secundárias.', 'err');
-      }
-    });
-  });
-}
-
-// ═══════════════════════════════════════════
-//  COACH — SQUAD ANALYSIS
-// ═══════════════════════════════════════════
-const POS_GROUPS = {
-  'GOL': { label: 'Goleiro',      ideal: 2 },
-  'ZAG': { label: 'Zagueiro',     ideal: 4 },
-  'LD':  { label: 'Lateral Dir.', ideal: 2 },
-  'LE':  { label: 'Lateral Esq.', ideal: 2 },
-  'VOL': { label: 'Volante',      ideal: 3 },
-  'MC':  { label: 'Meia Centro',  ideal: 3 },
-  'MEI': { label: 'Meia',         ideal: 2 },
-  'PE':  { label: 'Ponta Esq.',   ideal: 2 },
-  'PD':  { label: 'Ponta Dir.',   ideal: 2 },
-  'ATA': { label: 'Atacante',     ideal: 3 },
-};
-
-function renderCoach() {
-  const sv  = getSave();
-  const el  = document.getElementById('coach-output');
-  if (!el) return;
-  if (!sv)  { el.innerHTML = '<div style="color:var(--t3)">Nenhum save ativo.</div>'; return; }
-
-  const squad = getSquad(sv);
-  const players = squad.players;
-
-  if (!players.length) {
-    el.innerHTML = `<div class="coach-card"><div style="font-size:13px;color:var(--t3)">Adicione jogadores ao plantel para receber análises do Coach.</div></div>`;
-    return;
-  }
-
-  // Build stats per position (counting primary + secondary)
-  const posStats = {};
-  Object.keys(POS_GROUPS).forEach(pos => { posStats[pos] = { count: 0, totalOvr: 0, players: [] }; });
-
-  players.forEach(p => {
-    const allPos = [p.position, ...(p.secPos||[])].filter(Boolean);
-    const unique = [...new Set(allPos)];
-    unique.forEach(pos => {
-      if (posStats[pos]) {
-        posStats[pos].count++;
-        if (p.overall) posStats[pos].totalOvr += p.overall;
-        posStats[pos].players.push(p);
-      }
-    });
-  });
-
-  const teamOvr = players.filter(p=>p.overall).length
-    ? Math.round(players.filter(p=>p.overall).reduce((a,p) => a+(p.overall||0), 0) / players.filter(p=>p.overall).length) : null;
-
-  // ── Coach Tips
-  const warnings = [], goods = [];
-  Object.entries(POS_GROUPS).forEach(([pos, cfg]) => {
-    const st = posStats[pos];
-    const avgOvr = st.count && st.totalOvr ? Math.round(st.totalOvr / st.players.filter(p=>p.overall).length || st.count) : null;
-
-    if (st.count === 0) {
-      warnings.push({ icon: '🚨', text: `Nenhum ${cfg.label} no elenco! Posição descoberta.`, level: 'warn' });
-    } else if (st.count < cfg.ideal) {
-      const quality = avgOvr && avgOvr < 72 ? ' e o overall está baixo' : '';
-      warnings.push({ icon: '⚠️', text: `${cfg.label}: apenas ${st.count} jogador(es)${quality}. Reforço recomendado.`, level: 'warn' });
-    } else if (avgOvr && avgOvr < 70) {
-      warnings.push({ icon: '📉', text: `${cfg.label}: overall médio baixo (${avgOvr}). Melhore a qualidade.`, level: 'info' });
-    } else if (st.count >= cfg.ideal) {
-      goods.push({ icon: '✅', text: `${cfg.label}: elenco equilibrado (${st.count} jogadores${avgOvr ? ', OVR ' + avgOvr : ''}).`, level: 'ok' });
-    }
-  });
-
-  // ── HTML output
-  let html = `<div class="coach-card">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-      <div style="font-size:28px">🧠</div>
-      <div>
-        <div style="font-family:var(--font-h);font-size:18px;font-weight:700">Análise do Coach</div>
-        <div style="font-size:12px;color:var(--t3)">${players.length} jogadores${teamOvr ? ' · OVR médio do time: <strong style="color:var(--yellow)">' + teamOvr + '</strong>' : ''}</div>
-      </div>
-    </div>`;
-
-  if (warnings.length) {
-    html += `<div style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--t3);margin-bottom:8px">Pontos de atenção</div>`;
-    warnings.forEach(tip => {
-      html += `<div class="coach-tip ${tip.level}"><div class="coach-tip-icon">${tip.icon}</div><div class="coach-tip-text">${tip.text}</div></div>`;
-    });
-  }
-
-  if (goods.length) {
-    html += `<div style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--t3);margin:12px 0 8px">Posições equilibradas</div>`;
-    goods.slice(0,4).forEach(tip => {
-      html += `<div class="coach-tip ${tip.level}"><div class="coach-tip-icon">${tip.icon}</div><div class="coach-tip-text">${tip.text}</div></div>`;
-    });
-  }
-
-  html += `</div>`;
-
-  // ── Per-position breakdown
-  html += `<div class="sec-label" style="margin-top:20px">📊 Overall por Posição</div>`;
-  html += `<div style="display:flex;flex-direction:column;gap:5px">`;
-
-  Object.entries(POS_GROUPS).forEach(([pos, cfg]) => {
-    const st    = posStats[pos];
-    const mainP = squad.players.filter(p => p.position === pos && p.overall);
-    const avgOvr = mainP.length ? Math.round(mainP.reduce((a,p) => a+p.overall, 0) / mainP.length) : null;
-    const pct    = avgOvr ? Math.min(100, Math.round((avgOvr / 99) * 100)) : 0;
-    const color  = !avgOvr ? 'var(--t3)' : avgOvr >= 80 ? 'var(--green)' : avgOvr >= 72 ? 'var(--yellow)' : 'var(--red)';
-    const shortage = st.count < cfg.ideal ? `<span style="font-size:10px;color:var(--red);font-weight:700;margin-left:4px">▲ reforçar</span>` : '';
-
-    html += `<div class="analysis-row">
-      <span class="analysis-pos" style="color:${color}">${pos}</span>
-      <div class="analysis-bar-wrap">
-        <div class="analysis-bar-fill" style="width:${pct}%;background:${color}"></div>
-      </div>
-      <span class="analysis-ovr" style="color:${color}">${avgOvr || '—'}</span>
-      <span class="analysis-count">${st.count}/${cfg.ideal}${shortage}</span>
-    </div>`;
-  });
-
-  html += `</div>`;
-  el.innerHTML = html;
-}
-
-// ═══════════════════════════════════════════
-//  COACH — BASE ANALYSIS
-// ═══════════════════════════════════════════
-function renderCoachBase() {
-  const sv  = getSave();
-  const el  = document.getElementById('coach-base-output');
-  if (!el) return;
-  if (!sv)  { el.innerHTML = '<div style="color:var(--t3)">Nenhum save ativo.</div>'; return; }
-
-  const base  = sv.base || [];
-  const squad = getSquad(sv);
-  const tips  = [];
-
-  const getMaxPot = p => p.potential?.max ?? (typeof p.potential==='number' ? p.potential : 0);
-  const getAvgPot = p => {
-    const pot = p.potential;
-    if (!pot) return 0;
-    if (typeof pot === 'object') return Math.round(((pot.min||0) + (pot.max||0)) / 2);
-    return pot;
-  };
-
-  // ── 1. Quantity
-  const total = base.length;
-  if (total === 0) {
-    el.innerHTML = `<div class="coach-card"><div style="font-size:13px;color:var(--t3)">${t('base-coach-no-players')}</div></div>`;
-    return;
-  }
-  if (total < 8)       tips.push({ icon:'⚠️', text: t('base-coach-few'),  level:'warn' });
-  else if (total > 30) tips.push({ icon:'📋', text: t('base-coach-many'), level:'info' });
-  else                 tips.push({ icon:'✅', text: t('base-coach-ok'),   level:'ok'   });
-
-  // ── 2. Average potential (using max)
-  const avgMaxPot = Math.round(base.reduce((a,p) => a + getMaxPot(p), 0) / total);
-  if (avgMaxPot > 0) {
-    if (avgMaxPot < 70)       tips.push({ icon:'📉', text:`${t('base-coach-pot-low')} (${avgMaxPot})`,  level:'warn' });
-    else if (avgMaxPot < 80)  tips.push({ icon:'📊', text:`${t('base-coach-pot-mid')} (${avgMaxPot})`,  level:'info' });
-    else                      tips.push({ icon:'🌟', text:`${t('base-coach-pot-high')} (${avgMaxPot})`, level:'ok'   });
-  }
-
-  // ── 3. Gems
-  const gems = base.filter(p => getMaxPot(p) >= 80).length;
-  if (gems > 0) {
-    tips.push({ icon:'💎', text:`${gems} ${t('base-coach-gems')}`, level:'ok' });
-  }
-
-  // ── 4. Promote suggestion
-  if (gems > 0) {
-    tips.push({ icon:'🚀', text: t('base-coach-promote'), level:'info' });
-  }
-
-  // ── 5. Position gaps in base
-  const basePosCount = {};
-  base.forEach(p => { basePosCount[p.position] = (basePosCount[p.position]||0) + 1; });
-  const coveredPos   = new Set(base.map(p => p.position));
-  // Check default positions missing from base
-  DEFAULT_POSITIONS.forEach(pos => {
-    if (!coveredPos.has(pos)) {
-      tips.push({ icon:'🎯', text:`${t('base-coach-pos-lack')} ${pos}`, level:'warn' });
-    }
-  });
-
-  // ── 6. Sync with main squad needs
-  const squadPosCount = {};
-  squad.players.filter(p => p.group !== 'loan').forEach(p => {
-    squadPosCount[p.position] = (squadPosCount[p.position]||0) + 1;
-  });
-  const needsReinforcement = [];
-  Object.entries(POS_GROUPS).forEach(([pos, cfg]) => {
-    const cnt = squadPosCount[pos] || 0;
-    if (cnt < cfg.ideal) needsReinforcement.push(pos);
-  });
-  if (needsReinforcement.length > 0) {
-    tips.push({ icon:'⚽', text:`${t('base-coach-sync-need')} ${needsReinforcement.join(', ')}`, level:'warn' });
-  } else {
-    tips.push({ icon:'🔗', text: t('base-coach-sync-ok'), level:'ok' });
-  }
-
-  // ── Build HTML
-  let html = `<div class="coach-card">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-      <div style="font-size:28px">🌱</div>
-      <div>
-        <div style="font-family:var(--font-h);font-size:18px;font-weight:700">${t('base-coach-title')}</div>
-        <div style="font-size:12px;color:var(--t3)">${total} ${t('base-coach-total')}${avgMaxPot > 0 ? ` · ${t('base-coach-avg-pot')}: <strong style="color:var(--blue)">${avgMaxPot}</strong>` : ''}</div>
-      </div>
-    </div>`;
-
-  tips.forEach(tip => {
-    html += `<div class="coach-tip ${tip.level}"><div class="coach-tip-icon">${tip.icon}</div><div class="coach-tip-text">${tip.text}</div></div>`;
-  });
-
-  html += `</div>
-
-  <!-- Position distribution bar -->
-  <div class="sec-label" style="margin-top:20px">📊 Distribuição por Posição na Base</div>
-  <div style="display:flex;flex-direction:column;gap:5px">`;
-
-  DEFAULT_POSITIONS.forEach(pos => {
-    const cnt = basePosCount[pos] || 0;
-    const pct = Math.min(100, cnt * 25); // 4 players = 100%
-    const color = cnt === 0 ? 'var(--red)' : cnt < 2 ? 'var(--yellow)' : 'var(--green)';
-    html += `<div class="analysis-row">
-      <span class="analysis-pos" style="color:${color}">${pos}</span>
-      <div class="analysis-bar-wrap"><div class="analysis-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-      <span class="analysis-count" style="color:${color}">${cnt}</span>
-    </div>`;
-  });
-
-  html += `</div>`;
-  el.innerHTML = html;
-}
-
-// ── Wire coach sub-tabs (called once in setupSquadSectionTabs)
-function setupCoachSubTabs() {
-  document.querySelectorAll('[data-coach]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('[data-coach]').forEach(b => b.classList.toggle('active', b === btn));
-      const mode = btn.dataset.coach;
-      document.getElementById('coach-output').style.display      = mode === 'squad' ? '' : 'none';
-      document.getElementById('coach-base-output').style.display = mode === 'base'  ? '' : 'none';
-      if (mode === 'base') renderCoachBase();
-    });
-  });
-}
-
-// ═══════════════════════════════════════════
-//  TRANSFERS
-// ═══════════════════════════════════════════
-let txType    = 'buy';
-let txLoanDir = 'in';
-let txLoanDur = 'short';
-
-function getTransfers(sv) {
-  if (!sv.transfers) sv.transfers = [];
-  return sv.transfers;
-}
-
-const LOAN_DUR_LABEL = { short: '6 meses', mid: '1 ano', long: '2 anos' };
-const TX_TYPE_LABEL  = { buy: 'Compra', sell: 'Venda', loan: 'Empréstimo' };
-const TX_TYPE_ICON   = { buy: '⬇', sell: '⬆', loan: '↔' };
-
-function renderTransferHistory() {
-  const sv = getSave();
-  const el = document.getElementById('tx-history-list');
-  if (!el) return;
-  if (!sv) { el.innerHTML = ''; return; }
-
-  const transfers = getTransfers(sv);
-  if (!transfers.length) {
-    el.innerHTML = `<div style="color:var(--t3);font-size:13px;padding:12px 0;text-align:center;font-style:italic">Nenhuma transferência registrada ainda.</div>`;
-    return;
-  }
-
-  // Group by season
-  const bySeason = {};
-  transfers.forEach(tx => {
-    const k = tx.seasonYear || 'Sem temporada';
-    if (!bySeason[k]) bySeason[k] = [];
-    bySeason[k].push(tx);
-  });
-
-  let html = '';
-  Object.entries(bySeason).reverse().forEach(([season, txs]) => {
-    html += `<div class="sec-label" style="margin-top:14px;margin-bottom:8px">📅 ${season}</div>`;
-    txs.slice().reverse().forEach(tx => {
-      const val  = tx.value   ? `<span class="tx-value">${tx.value}M€</span>` : '';
-      const ovr  = tx.overall ? `<span class="ovr-badge" style="font-size:12px">${tx.overall}</span>` : '';
-      const pos  = tx.position? `<span style="font-size:11px;color:var(--t3)">${tx.position}</span>` : '';
-      let extra  = '';
-      if (tx.type === 'loan') {
-        const dir = tx.loanDir === 'in' ? '📥 Recebido' : '📤 Enviado';
-        const dur = LOAN_DUR_LABEL[tx.loanDur] || '';
-        const pct = (tx.pctMe || tx.pctThem)
-          ? `<span class="loan-detail">${tx.pctMe||0}% / ${tx.pctThem||0}%</span>` : '';
-        extra = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
-          <span class="loan-detail">${dir}</span>
-          <span class="loan-detail">${dur}</span>
-          ${pct}
-        </div>`;
-      }
-      html += `<div class="transfer-item">
-        <span class="tx-type-dot ${tx.type}"></span>
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="tx-name">${tx.playerName}</span>
-            ${pos}${ovr}
-            <span class="tx-tag ${tx.type}">${TX_TYPE_ICON[tx.type]} ${TX_TYPE_LABEL[tx.type]}</span>
-            ${val}
-          </div>
-          ${extra}
-        </div>
-        <button class="pact del" onclick="deleteTransfer('${tx.id}')" title="Remover">✕</button>
-      </div>`;
-    });
-  });
-
-  el.innerHTML = html;
-}
-
-function deleteTransfer(txId) {
-  const sv = getSave(); if (!sv) return;
-  if (!confirm('Remover esta transferência?')) return;
-  sv.transfers = (sv.transfers||[]).filter(tx => tx.id !== txId);
-  save(); renderTransferHistory();
-  toast('Transferência removida.', 'err');
-}
-window.deleteTransfer = deleteTransfer;
-
-function refreshTxPlayerSuggestions() {
-  const sv  = getSave();
-  const dl  = document.getElementById('tx-player-suggestions');
-  if (!dl) return;
-  const players = sv ? getSquad(sv).players : [];
-  dl.innerHTML = players.map(p => `<option value="${p.name}">`).join('');
-}
-
-function setupTransferEvents() {
-  // ── Type buttons
-  document.querySelectorAll('.tx-type-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      txType = btn.dataset.txtype;
-      document.querySelectorAll('.tx-type-btn').forEach(b => {
-        b.className = `tx-type-btn${b.dataset.txtype === txType ? ` active-${txType}` : ''}`;
-      });
-      // Show/hide loan fields
-      document.getElementById('tx-loan-fields').style.display = txType === 'loan' ? '' : 'none';
-      // For sell: overall not needed
-      document.getElementById('tx-ovr-wrap').style.display    = txType === 'sell' ? 'none' : '';
-      // For loan: value not shown
-      document.getElementById('tx-value-wrap').style.display  = txType === 'loan' ? 'none' : '';
-    });
-  });
-
-  // ── Loan direction toggle
-  document.querySelectorAll('#tx-loan-dir-tg .tb').forEach(btn => {
-    btn.addEventListener('click', () => {
-      txLoanDir = btn.dataset.dir;
-      document.querySelectorAll('#tx-loan-dir-tg .tb').forEach(b => b.classList.toggle('on', b.dataset.dir === txLoanDir));
-    });
-  });
-
-  // ── Loan duration toggle
-  document.querySelectorAll('#tx-loan-dur-tg .tb').forEach(btn => {
-    btn.addEventListener('click', () => {
-      txLoanDur = btn.dataset.dur;
-      document.querySelectorAll('#tx-loan-dur-tg .tb').forEach(b => b.classList.toggle('on', b.dataset.dur === txLoanDur));
-    });
-  });
-
-  // ── Register button
-  document.getElementById('btn-tx-register').addEventListener('click', () => {
-    const sv = getSave();
-    if (!sv) { toast(t('toast-need-save'), 'err'); return; }
-
-    const season = getSeason(sv);
-    const name   = document.getElementById('tx-player-name').value.trim();
-    if (!name) { toast('Digite o nome do jogador.', 'err'); return; }
-
-    const pos     = document.getElementById('tx-player-pos').value || null;
-    const overall = txType !== 'sell' ? (parseInt(document.getElementById('tx-overall').value) || null) : null;
-    const value   = txType !== 'loan' ? (parseFloat(document.getElementById('tx-value').value) || null) : null;
-
-    const tx = {
-      id:         uid(),
-      type:       txType,
-      playerName: name,
-      position:   pos,
-      overall,
-      value,
-      seasonYear: season?.year || null,
-      ts:         Date.now(),
-    };
-
-    if (txType === 'loan') {
-      tx.loanDir  = txLoanDir;
-      tx.loanDur  = txLoanDur;
-      tx.pctMe    = parseInt(document.getElementById('tx-loan-pct-me').value)   || null;
-      tx.pctThem  = parseInt(document.getElementById('tx-loan-pct-them').value) || null;
-    }
-
-    // ── Auto squad integration
-    const squad = getSquad(sv);
-    if (txType === 'buy') {
-      // Add to squad automatically
-      squad.players.push({ id: uid(), name, position: pos||'ATA', overall, group: 'bench', role: null });
-      toast(`${name} adicionado ao plantel! ⬇ Compra registrada.`);
-    } else if (txType === 'sell') {
-      // Remove from squad
-      const idx = squad.players.findIndex(p => p.name.toLowerCase() === name.toLowerCase());
-      if (idx >= 0) {
-        squad.players.splice(idx, 1);
-        toast(`${name} removido do plantel. ⬆ Venda registrada.`);
-      } else {
-        toast(`⬆ Venda de ${name} registrada.`);
-      }
-    } else if (txType === 'loan') {
-      if (txLoanDir === 'in') {
-        // Received on loan → add to squad
-        squad.players.push({ id: uid(), name, position: pos||'ATA', overall, group: 'bench', role: null });
-        toast(`${name} adicionado (empréstimo recebido). ↔`);
-      } else {
-        // Sent on loan → remove from squad
-        const idx = squad.players.findIndex(p => p.name.toLowerCase() === name.toLowerCase());
-        if (idx >= 0) {
-          squad.players.splice(idx, 1);
-          toast(`${name} saiu em empréstimo. ↔`);
-        } else {
-          toast(`↔ Empréstimo de ${name} registrado.`);
-        }
-      }
-    }
-
-    getTransfers(sv).push(tx);
-    save();
-
-    // Reset form
-    document.getElementById('tx-player-name').value   = '';
-    document.getElementById('tx-player-pos').value    = '';
-    document.getElementById('tx-overall').value       = '';
-    document.getElementById('tx-value').value         = '';
-    document.getElementById('tx-loan-pct-me').value   = '';
-    document.getElementById('tx-loan-pct-them').value = '';
-
-    renderSquad();
-    renderTransferHistory();
-  });
-}
-
-// ═══════════════════════════════════════════
-//  MATCHES
-// ═══════════════════════════════════════════
-function renderMatches() {
-  const sv = getSave();
-  const season = getSeason(sv);
-  const el = document.getElementById('matches-list');
-  document.getElementById('matches-sub').textContent = season ? `${sv.clubName} · ${season.year}` : '';
-
-  if (!season) { el.innerHTML = noSaveMsg(); return; }
-
-  let ms = [...(season.matches||[])].reverse();
-  if (activeFilter !== 'all') ms = ms.filter(m => getResult(m) === activeFilter);
-
-  if (!ms.length) {
-    el.innerHTML = `<div class="empty"><div class="empty-icon">⚽</div><div class="empty-title">${t('no-matches')}</div><div class="empty-desc">${t('no-matches-desc')}</div></div>`;
-    return;
-  }
-
-  el.innerHTML = ms.map(m => {
-    const r = getResult(m);
-    const scorerLine = (m.goals||[]).length ? (m.goals||[]).map(g=>g.scorer).join(', ') : '';
-    const ratingBadge = m.rating !== null && m.rating !== undefined
-      ? `<span style="font-size:10px;color:var(--yellow);font-weight:700;margin-left:6px">⭐${m.rating}</span>` : '';
-    return `<div class="match-item" data-mid="${m.id}">
-      <div class="result-badge ${r}">${resultLabel(r)}</div>
-      <div class="match-info">
-        <div class="match-opp">vs ${m.opp}${ratingBadge}</div>
-        <div class="match-meta">${m.comp} · ${m.venue} · ${fmtDate(m.ts)}</div>
-        ${scorerLine ? `<div style="font-size:11px;color:var(--green);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">⚽ ${scorerLine}</div>` : ''}
-      </div>
-      <div class="match-score">
-        <span class="gf">${m.gf}</span><span class="sep">-</span><span class="ga">${m.ga}</span>
-      </div>
-    </div>`;
-  }).join('');
-
-  el.querySelectorAll('.match-item').forEach(item => {
-    item.addEventListener('click', () => showDetail(item.dataset.mid, season));
-  });
-}
-
-// ═══════════════════════════════════════════
-//  MATCH AUTO-SUMMARY
-// ═══════════════════════════════════════════
-function generateMatchSummary(m) {
-  const r   = getResult(m);
-  const gf  = m.gf ?? 0;
-  const ga  = m.ga ?? 0;
-  const diff = gf - ga;
-  const poss  = m.possession ?? null;   // 0-100
-  const shots = m.shots      ?? null;
-
-  // ── Blocks ──────────────────────────────
-  // 1. Result flavour
-  let resultPhrase = '';
-  if (r === 'W') {
-    if (diff >= 3)       resultPhrase = t('sum-w-dominant');   // "Vitória dominante"
-    else if (diff === 2) resultPhrase = t('sum-w-comfortable');// "Vitória confortável"
-    else if (gf === 1)   resultPhrase = t('sum-w-narrow');     // "Vitória sofrida"
-    else                 resultPhrase = t('sum-w-solid');      // "Vitória sólida"
-  } else if (r === 'D') {
-    if (gf === 0)        resultPhrase = t('sum-d-goalless');   // "Empate sem gols"
-    else if (gf >= 2)    resultPhrase = t('sum-d-thrilling');  // "Empate emocionante"
-    else                 resultPhrase = t('sum-d-even');       // "Empate equilibrado"
-  } else {
-    if (diff <= -3)      resultPhrase = t('sum-l-heavy');      // "Derrota pesada"
-    else if (ga === 1)   resultPhrase = t('sum-l-narrow');     // "Derrota sofrida por pouco"
-    else                 resultPhrase = t('sum-l-clear');      // "Derrota clara"
-  }
-
-  // 2. Possession flavour (only if recorded)
-  let possPhrase = '';
-  if (poss !== null) {
-    if (poss >= 65)      possPhrase = t('sum-poss-dominant');  // "com domínio total de bola"
-    else if (poss >= 55) possPhrase = t('sum-poss-good');      // "com boa posse de bola"
-    else if (poss >= 45) possPhrase = t('sum-poss-even');      // "com posse equilibrada"
-    else if (poss >= 35) possPhrase = t('sum-poss-low');       // "com pouca posse de bola"
-    else                 possPhrase = t('sum-poss-very-low');  // "sendo pressionado a maior parte"
-  }
-
-  // 3. Offensive flavour (only if shots recorded)
-  let offPhrase = '';
-  if (shots !== null) {
-    const convRate = shots > 0 ? gf / shots : 0;
-    if (shots >= 15 && convRate >= 0.25) offPhrase = t('sum-off-clinical');   // "ataque clínico"
-    else if (shots >= 15)                offPhrase = t('sum-off-active');     // "ataque ativo mas ineficiente"
-    else if (shots >= 8 && convRate >= 0.3) offPhrase = t('sum-off-efficient'); // "ataque eficiente"
-    else if (shots < 5)                  offPhrase = t('sum-off-poor');       // "poucas chegadas ao ataque"
-  }
-
-  // ── Assemble ────────────────────────────
-  const parts = [resultPhrase];
-  if (possPhrase) parts.push(possPhrase);
-  if (offPhrase)  parts.push(offPhrase);
-
-  // Join: "Vitória dominante, com domínio total de bola e ataque clínico"
-  if (parts.length === 1) return parts[0] + '.';
-  const last = parts.pop();
-  return parts.join(', ') + ' ' + t('sum-and') + ' ' + last + '.';
-}
-
-function showDetail(mid, season) {
-  const m = (season.matches||[]).find(x => x.id === mid);
-  if (!m) return;
-  detailMatchId = mid;
-  const r = getResult(m);
-  const rLabel = resultFull(r);
-  const rColor = r==='W'?'var(--green)':r==='D'?'var(--yellow)':'var(--red)';
-  document.getElementById('detail-title').textContent = `vs ${m.opp}`;
-
-  // Auto-summary
-  const summary = generateMatchSummary(m);
-  const summaryBg  = r==='W'?'var(--green-d)':r==='D'?'var(--yellow-d)':'var(--red-d)';
-  const summaryBdr = r==='W'?'rgba(35,209,139,.2)':r==='D'?'rgba(245,183,49,.2)':'rgba(240,79,94,.2)';
-  const summaryHTML = `<div style="margin:10px 0 4px;background:${summaryBg};border:1px solid ${summaryBdr};border-radius:8px;padding:8px 12px;font-size:13px;font-style:italic;color:var(--t2)">💬 ${summary}</div>`;
-
-  const goalsHTML = (m.goals||[]).length
-    ? `<div style="margin-top:16px">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--t3);margin-bottom:8px">${t('rec-goals')}</div>
-        ${(m.goals||[]).map(g=>`
-          <div class="detail-goal">
-            <div class="detail-goal-icon">⚽</div>
-            <div>
-              <div class="detail-goal-scorer">${g.scorer}</div>
-              ${g.assist?`<div class="detail-goal-assist">🅰 ${t('lbl-assist').replace(' (opcional)','')}: ${g.assist}</div>`:''}
-            </div>
-          </div>
-        `).join('')}
-      </div>`
-    : '';
-
-  const hasRating = m.rating !== null && m.rating !== undefined;
-  const ratingHTML = (hasRating || m.bestPlayer || m.worstPlayer || m.notes) ? `
-    <div style="margin-top:16px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--t3);margin-bottom:10px">${t('lbl-rating-section')}</div>
-      ${hasRating ? `<div style="margin-bottom:12px">
-        <div class="detail-rating">⭐ ${m.rating}<span style="font-size:13px;font-weight:400;color:var(--t2);margin-left:6px">/10 — ${t('detail-rating-label')}</span></div>
-      </div>` : ''}
-      ${(m.bestPlayer || m.worstPlayer) ? `<div style="margin-bottom:10px">
-        ${m.bestPlayer  ? `<div class="detail-player-row"><span class="detail-player-icon">🌟</span><span class="detail-player-label">${t('detail-best')}</span><span style="font-weight:600">${m.bestPlayer}</span></div>` : ''}
-        ${m.worstPlayer ? `<div class="detail-player-row"><span class="detail-player-icon">👎</span><span class="detail-player-label">${t('detail-worst')}</span><span style="font-weight:600">${m.worstPlayer}</span></div>` : ''}
-      </div>` : ''}
-      ${m.notes ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:4px">${t('detail-notes')}</div><div class="detail-notes">${m.notes}</div></div>` : ''}
-    </div>` : '';
-
-  document.getElementById('detail-body').innerHTML = `
-    <div class="big-score">${m.gf}<span style="color:var(--t3);margin:0 8px">–</span>${m.ga}</div>
-    <div style="text-align:center;margin-bottom:4px">
-      <span style="font-weight:700;color:${rColor}">${rLabel}</span>
-      <span style="color:var(--t3);margin:0 8px">·</span>
-      <span style="color:var(--t2)">${m.comp}</span>
-      <span style="color:var(--t3);margin:0 8px">·</span>
-      <span style="color:var(--t2)">${m.venue}</span>
-    </div>
-    <div style="color:var(--t3);font-size:12px;text-align:center;margin-bottom:6px">${fmtDate(m.ts)}${m.tactic?` · <span style="color:var(--green)">${m.tactic}</span>`:''}</div>
-    ${summaryHTML}
-    ${(m.possession||m.shots) ? `<div style="display:flex;gap:10px;justify-content:center;margin:10px 0;flex-wrap:wrap">
-      ${m.possession?`<span class="chip">🎯 ${t('lbl-possession').replace(' (%)','')}: ${m.possession}%</span>`:''}
-      ${m.shots?`<span class="chip">👟 ${t('lbl-shots')}: ${m.shots}</span>`:''}
-    </div>` : ''}
-    ${goalsHTML}
-    ${ratingHTML}
-  `;
-  openModal('modal-detail');
-}
-
-function noSaveMsg() {
-  return `<div class="no-save">
-    <div style="font-size:40px">💾</div>
-    <div style="font-size:16px;font-weight:600;color:var(--t2)">${t('no-save-msg')}</div>
-    <button class="btn btn-primary btn-sm" onclick="goTo('saves')">${t('go-saves')}</button>
-  </div>`;
-}
-
-// ═══════════════════════════════════════════
-//  SQUAD
-// ═══════════════════════════════════════════
-const BENCH_MAX = 9;
-const OUT_MAX   = 20;
-// ═══════════════════════════════════════════
-//  CUSTOM POSITIONS SYSTEM
-// ═══════════════════════════════════════════
-const DEFAULT_POSITIONS = ['GOL','ZAG','LD','LE','VOL','MC','MEI','PE','PD','ATA'];
-
-function getCustomPositions(sv) {
-  if (!sv) return [];
-  if (!sv.customPositions) sv.customPositions = [];
-  return sv.customPositions;
-}
-
-function getAllPositions(sv) {
-  return [...DEFAULT_POSITIONS, ...getCustomPositions(sv)];
-}
-
-function addCustomPosition(sv, pos) {
-  const clean = pos.trim().toUpperCase().slice(0, 10);
-  if (!clean) return null;
-  if (getAllPositions(sv).includes(clean)) return null; // already exists
-  getCustomPositions(sv).push(clean);
-  save();
-  return clean;
-}
-
-// Build position buttons HTML for a given toggle group
-// mode: 'single' (radio) or 'multi' (checkbox-style)
-// currentSelected: string (single) or array (multi)
-// showAddBtn: show the "+ Posição" button
-function buildPosTgHtml(sv, mode, currentSelected, showAddBtn) {
-  const allPos = getAllPositions(sv);
-  const selected = Array.isArray(currentSelected) ? currentSelected : (currentSelected ? [currentSelected] : []);
-  const btns = allPos.map(pos => {
-    const isOn = selected.includes(pos);
-    const isCustom = !DEFAULT_POSITIONS.includes(pos);
-    return `<button class="tb${isOn?' on':''}" data-pos="${pos}" ${isCustom?'style="border-style:dashed"':''}>${pos}</button>`;
-  }).join('');
-  const addBtn = showAddBtn
-    ? `<button class="tb-add-pos" data-action="add-pos">+ Posição</button>`
-    : '';
-  return btns + addBtn;
-}
-
-// Refresh a specific toggle group's buttons (keeps current selection)
-function refreshPosTg(tgId, sv, mode, currentSelected) {
-  const el = document.getElementById(tgId);
-  if (!el) return;
-  el.innerHTML = buildPosTgHtml(sv, mode, currentSelected, true);
-  // Re-wire click handlers
-  el.querySelectorAll('[data-pos]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (mode === 'single') {
-        el.querySelectorAll('[data-pos]').forEach(b => b.classList.remove('on'));
-        btn.classList.add('on');
-      } else {
-        btn.classList.toggle('on');
-      }
-    });
-  });
-  // Wire the + Posição button
-  const addBtn = el.querySelector('[data-action="add-pos"]');
-  if (addBtn) {
-    addBtn.addEventListener('click', () => promptAddCustomPos(sv, tgId, mode, el));
-  }
-}
-
-function promptAddCustomPos(sv, tgId, mode, el) {
-  const raw = window.prompt('Nome da nova posição (máx 10 caracteres):', '');
-  if (raw === null) return; // cancelled
-  const pos = addCustomPosition(sv, raw);
-  if (!pos) {
-    if (raw.trim()) toast('Posição já existe ou nome inválido.', 'err');
-    return;
-  }
-  // Get current selection to preserve it
-  const currentSelected = mode === 'single'
-    ? (el.querySelector('[data-pos].on')?.dataset.pos || null)
-    : [...el.querySelectorAll('[data-pos].on')].map(b => b.dataset.pos);
-  refreshPosTg(tgId, sv, mode, currentSelected);
-  toast(`Posição "${pos}" adicionada!`);
-  // Also refresh transfer and base position dropdowns
-  refreshPosDropdowns(sv);
-}
-
-// Refresh transfer and base pos <select> dropdowns
-function refreshPosDropdowns(sv) {
-  const ids = ['tx-player-pos', 'base-player-pos'];
-  ids.forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    const current = sel.value;
-    const allPos  = getAllPositions(sv);
-    sel.innerHTML = `<option value="">—</option>` +
-      allPos.map(p => {
-        const isCustom = !DEFAULT_POSITIONS.includes(p);
-        return `<option value="${p}"${p === current ? ' selected' : ''}${isCustom ? ' style="font-style:italic"' : ''}>${p}</option>`;
-      }).join('');
-  });
-}
-
-// Called every time a modal that has position toggles opens
-function initPosTg(sv) {
-  // Add modal: position (single) and secondary (multi)
-  refreshPosTg('position-tg',    sv, 'single', selNewPos);
-  refreshPosTg('add-sec-pos-tg', sv, 'multi',  addSecPos);
-  // Restore group-tg onclick handlers (they don't need refresh but run after innerHTML clears)
-  refreshPosDropdowns(sv);
-}
-
-function initEditPosTg(sv, player) {
-  refreshPosTg('edit-position-tg', sv, 'single', player.position);
-  refreshPosTg('edit-sec-pos-tg',  sv, 'multi',  player.secPos||[]);
-}
-
-function initBasePosTg(sv, secPos) {
-  refreshPosTg('base-sec-pos-tg', sv, 'multi', secPos||[]);
-}
-
-const POSITIONS = DEFAULT_POSITIONS;
-
-function getSquad(sv) {
-  // Ensure squad structure exists on the save
-  if (!sv) return null;
-  if (!sv.squad) sv.squad = { players:[], tactic:'' };
-  if (!sv.squad.players) sv.squad.players = [];
-  return sv.squad;
-}
-
-// ═══════════════════════════════════════════
-//  SQUAD AUTO-SORT
-// ═══════════════════════════════════════════
-
-// Canonical position order (lower = first in list)
-const POS_ORDER = {
-  // Goalkeepers
-  'GOL':1,'GK':1,'GR':1,
-  // Defenders
-  'ZAG':2,'CB':2,'DC':2,
-  'LD':3,'RB':3,'DR':3,
-  'LE':4,'LB':4,'DL':4,
-  // Wide defenders / wingbacks
-  'RWB':5,'LWB':6,'ALA':5,
-  // Defensive mid
-  'VOL':7,'CDM':7,'MDF':7,'DM':7,
-  // Central mid
-  'MC':8,'CM':8,'MO':8,
-  // Attacking mid
-  'MEI':9,'CAM':9,'SS':9,'AM':9,
-  // Wide mid
-  'MD':10,'RM':10,'MR':10,
-  'ME':11,'LM':11,'ML':11,
-  // Wide forwards
-  'PD':12,'RW':12,'AD':12,
-  'PE':13,'LW':13,'AE':13,
-  // Strikers / forwards
-  'ATA':14,'ST':14,'CF':14,'CA':14,
-  'SA':15,'F9':15,
-};
-
-// Keyword-based category detector for custom positions
-function detectPosCategory(pos) {
-  const p = pos.toLowerCase();
-  // Goalkeeper
-  if (/gol|gk|guar|keeper/.test(p)) return 1;
-  // Defenders
-  if (/zag|back|cb|late|ala|wing.*b|rwb|lwb|def/.test(p)) return 3;
-  // Wide forwards
-  if (/ponta|winger|pd|pe|rw|lw|wing(?!.*b)/.test(p)) return 12;
-  // Strikers
-  if (/ata|cen|strik|forward|falso|f9|sa|ca|cf/.test(p)) return 14;
-  // Default: midfield
-  return 8;
-}
-
-function getPosOrder(pos) {
-  if (!pos) return 99;
-  const upper = pos.toUpperCase();
-  if (POS_ORDER[upper] !== undefined) return POS_ORDER[upper];
-  // Custom position: detect by keyword
-  return detectPosCategory(pos);
-}
-
-function sortSquadPlayers(players) {
-  return [...players].sort((a, b) => {
-    const orderDiff = getPosOrder(a.position) - getPosOrder(b.position);
-    if (orderDiff !== 0) return orderDiff;
-    // Same position: higher overall first
-    return (b.overall || 0) - (a.overall || 0);
-  });
-}
-
+// ── Render squads
 function renderSquad() {
-  const sv = getSave();
-  const noSave  = document.getElementById('no-save-squad');
-  const main    = document.getElementById('squad-main');
-
+  const sv   = getSave();
+  const noSave = document.getElementById('no-save-squad');
+  const main   = document.getElementById('squad-main');
   if (!sv) { noSave.style.display=''; main.style.display='none'; return; }
   noSave.style.display='none'; main.style.display='';
 
   document.getElementById('squad-sub').textContent = sv.clubName;
-
   const squad = getSquad(sv);
 
-  // ── Tactic
+  // Tactic
   const tacticDisplay = document.getElementById('squad-tactic-display');
   const tacticSelect  = document.getElementById('squad-tactic-select');
   tacticDisplay.textContent = squad.tactic || '—';
-  // Pre-select if value matches one of the options
   const opts = Array.from(tacticSelect.options).map(o=>o.value);
   if (squad.tactic && opts.includes(squad.tactic)) {
     tacticSelect.value = squad.tactic;
@@ -5375,7 +4475,7 @@ function renderSquad() {
     document.getElementById('squad-tactic-custom').value = squad.tactic;
   }
 
-  // ── Groups — auto-sorted by position then overall
+  // Groups — auto-sorted
   const starters = sortSquadPlayers(squad.players.filter(p=>p.group==='starter'));
   const bench    = sortSquadPlayers(squad.players.filter(p=>p.group==='bench'));
   const out      = sortSquadPlayers(squad.players.filter(p=>p.group==='out'));
@@ -5389,41 +4489,26 @@ function renderSquad() {
   renderGroupList('list-starter', starters, 'starter');
   renderGroupList('list-bench',   bench,    'bench');
   renderGroupList('list-out',     out,      'out');
-  renderLoanList('list-loan',     loans);
+  renderLoanList ('list-loan',    loans);
 
-  // ── Update player datalist for goal entry
   refreshSquadDatalist(squad.players);
-
-  // ── Refresh transfer and base position dropdowns with custom positions
   refreshPosDropdowns(sv);
-
-  // ── Render transfer history & refresh transfer player suggestions
   refreshTxPlayerSuggestions();
   renderTransferHistory();
 
-  // ── If field view is active, refresh it too
   if (currentView === 'field') requestAnimationFrame(() => renderFieldView());
 }
 
 function renderGroupList(elId, players, currentGroup) {
   const el = document.getElementById(elId);
-  if (!players.length) {
-    el.innerHTML = `<div class="group-empty">${t('group-empty')}</div>`;
-    return;
-  }
-
+  if (!players.length) { el.innerHTML = `<div class="group-empty">${t('group-empty')}</div>`; return; }
   const roleLabel = { crucial:'Crucial', important:'Importante', sporadic:'Esporádico', prospect:'Promessa', rotation:'Rodízio' };
   const roleClass = { crucial:'role-crucial', important:'role-important', sporadic:'role-sporadic', prospect:'role-prospect', rotation:'role-rotation' };
-
   el.innerHTML = players.map(p => {
     const posClass     = `pos-${p.position}`;
-    const roleBadge    = p.role && roleLabel[p.role]
-      ? `<span class="role-badge ${roleClass[p.role]}">${roleLabel[p.role]}</span>` : '';
-    const ovrBadge     = p.overall
-      ? `<span class="ovr-badge">${p.overall}</span>` : '';
-    const secPosBadges = (p.secPos||[]).slice(0,4).map(s =>
-      `<span class="sec-pos-tag">${s}</span>`).join('');
-
+    const roleBadgeHtml= p.role && roleLabel[p.role] ? `<span class="role-badge ${roleClass[p.role]}">${roleLabel[p.role]}</span>` : '';
+    const ovrBadge     = p.overall ? `<span class="ovr-badge">${p.overall}</span>` : '';
+    const secPosBadges = (p.secPos||[]).slice(0,4).map(s=>`<span class="sec-pos-tag">${s}</span>`).join('');
     return `<div class="player-card" data-pid="${p.id}">
       <div class="pc-row1">
         <span class="pos-badge ${posClass}">${p.position}</span>
@@ -5431,10 +4516,7 @@ function renderGroupList(elId, players, currentGroup) {
         <span class="pc-name">${p.name}</span>
       </div>
       <div class="pc-row2">
-        <div class="pc-badges">
-          ${roleBadge}
-          ${secPosBadges}
-        </div>
+        <div class="pc-badges">${roleBadgeHtml}${secPosBadges}</div>
         <div class="pc-actions">
           <select class="player-move-select" data-pid="${p.id}" title="${t('move-to')}">
             <option value="">${t('move-to')}</option>
@@ -5448,12 +4530,10 @@ function renderGroupList(elId, players, currentGroup) {
       </div>
     </div>`;
   }).join('');
-
   el.querySelectorAll('.player-move-select').forEach(sel => {
     sel.addEventListener('change', () => {
-      const newGroup = sel.value;
-      if (!newGroup) return;
-      movePlayer(sel.dataset.pid, newGroup);
+      if (!sel.value) return;
+      movePlayer(sel.dataset.pid, sel.value);
       sel.value = '';
     });
   });
@@ -5461,30 +4541,23 @@ function renderGroupList(elId, players, currentGroup) {
 
 function renderLoanList(elId, players) {
   const el = document.getElementById(elId);
-  if (!players.length) {
-    el.innerHTML = `<div class="group-empty">Sem jogadores emprestados</div>`;
-    return;
-  }
+  if (!players.length) { el.innerHTML = `<div class="group-empty">Sem jogadores emprestados</div>`; return; }
   const MONTHS = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   const roleLabel = { crucial:'Crucial', important:'Importante', sporadic:'Esporádico', prospect:'Promessa', rotation:'Rodízio' };
   const roleClass = { crucial:'role-crucial', important:'role-important', sporadic:'role-sporadic', prospect:'role-prospect', rotation:'role-rotation' };
-
   el.innerHTML = players.map(p => {
-    const posClass   = `pos-${p.position}`;
-    const ovrBadge   = p.overall ? `<span class="ovr-badge">${p.overall}</span>` : '';
-    const roleBadge  = p.role && roleLabel[p.role]
-      ? `<span class="role-badge ${roleClass[p.role]}">${roleLabel[p.role]}</span>` : '';
-    const secPosBadges = (p.secPos||[]).slice(0,3).map(s => `<span class="sec-pos-tag">${s}</span>`).join('');
-
+    const posClass     = `pos-${p.position}`;
+    const ovrBadge     = p.overall ? `<span class="ovr-badge">${p.overall}</span>` : '';
+    const roleBadgeHtml= p.role && roleLabel[p.role] ? `<span class="role-badge ${roleClass[p.role]}">${roleLabel[p.role]}</span>` : '';
+    const secPosBadges = (p.secPos||[]).slice(0,3).map(s=>`<span class="sec-pos-tag">${s}</span>`).join('');
     let returnBadge = '';
     if (p.loanReturn?.month && p.loanReturn?.year) {
-      const now   = new Date();
-      const retD  = new Date(p.loanReturn.year, p.loanReturn.month - 1, p.loanReturn.day || 1);
-      const overdue = retD < now;
-      const label = `${p.loanReturn.day ? p.loanReturn.day + ' ' : ''}${MONTHS[p.loanReturn.month]} ${p.loanReturn.year}`;
-      returnBadge = `<span class="loan-return-badge${overdue?' overdue':''}">📅 ${label}${overdue ? ' ⚠️' : ''}</span>`;
+      const now  = new Date();
+      const retD = new Date(p.loanReturn.year, p.loanReturn.month-1, p.loanReturn.day||1);
+      const od   = retD < now;
+      const lbl  = `${p.loanReturn.day?p.loanReturn.day+' ':''}${MONTHS[p.loanReturn.month]} ${p.loanReturn.year}`;
+      returnBadge = `<span class="loan-return-badge${od?' overdue':''}">📅 ${lbl}${od?' ⚠️':''}</span>`;
     }
-
     return `<div class="player-card" data-pid="${p.id}">
       <div class="pc-row1">
         <span class="pos-badge ${posClass}">${p.position}</span>
@@ -5492,11 +4565,7 @@ function renderLoanList(elId, players) {
         <span class="pc-name">${p.name}</span>
       </div>
       <div class="pc-row2">
-        <div class="pc-badges">
-          ${roleBadge}
-          ${returnBadge}
-          ${secPosBadges}
-        </div>
+        <div class="pc-badges">${roleBadgeHtml}${returnBadge}${secPosBadges}</div>
         <div class="pc-actions">
           <button class="btn btn-ghost btn-sm" onclick="returnFromLoan('${p.id}')" style="font-size:11px;padding:0 8px;height:26px">↩</button>
           <button class="pact" onclick="openEditPlayer('${p.id}')" title="Editar">✏️</button>
@@ -5510,11 +4579,9 @@ function renderLoanList(elId, players) {
 function returnFromLoan(pid) {
   const sv = getSave(); if (!sv) return;
   const squad = getSquad(sv);
-  const player = squad.players.find(p => p.id === pid);
+  const player = squad.players.find(p=>p.id===pid);
   if (!player) return;
-  player.group    = 'bench';
-  player.onLoan   = false;
-  player.loanReturn = null;
+  player.group = 'bench'; player.onLoan = false; player.loanReturn = null;
   save(); renderSquad();
   toast(`${player.name} retornou ao elenco.`);
 }
@@ -5525,26 +4592,260 @@ function movePlayer(pid, newGroup) {
   const squad = getSquad(sv);
   const player = squad.players.find(p=>p.id===pid);
   if (!player) return;
-  if (player.group === 'loan') { toast('Use "↩ Retornar" para mover jogadores emprestados.', 'err'); return; }
-
-  const benchCount = squad.players.filter(p=>p.group==='bench'&&p.id!==pid&&p.group!=='loan').length;
-  const outCount   = squad.players.filter(p=>p.group==='out'  &&p.id!==pid&&p.group!=='loan').length;
-
-  // If destination is full → open swap modal instead of error
-  if (newGroup==='bench' && benchCount >= BENCH_MAX) {
-    openSwapModal(pid, newGroup, squad); return;
-  }
-  if (newGroup==='out' && outCount >= OUT_MAX) {
-    openSwapModal(pid, newGroup, squad); return;
-  }
-
+  if (player.group==='loan') { toast('Use "↩ Retornar" para mover jogadores emprestados.','err'); return; }
+  const benchCount = squad.players.filter(p=>p.group==='bench'&&p.id!==pid).length;
+  const outCount   = squad.players.filter(p=>p.group==='out'  &&p.id!==pid).length;
+  if (newGroup==='bench' && benchCount>=BENCH_MAX) { openSwapModal(pid, newGroup, squad); return; }
+  if (newGroup==='out'   && outCount  >=OUT_MAX  ) { openSwapModal(pid, newGroup, squad); return; }
   player.group = newGroup;
   save(); renderSquad();
   const dest = newGroup==='starter'?t('toast-starters'):newGroup==='bench'?t('toast-bench'):t('toast-out');
   toast(`${player.name} ${t('toast-moved-to')} ${dest}.`);
 }
 
-// ── Swap modal
+function refreshSquadDatalist(players) {
+  const dl = document.getElementById('player-suggestions');
+  if (!dl) return;
+  dl.innerHTML = (players||[]).map(p=>`<option value="${p.name}">`).join('');
+}
+
+// ── Squad events
+function setupSquadEvents() {
+  document.getElementById('btn-open-add-player').addEventListener('click', () => {
+    const sv = getSave();
+    if (!sv) { toast(t('toast-need-save'),'err'); return; }
+    document.getElementById('in-player-name').value = '';
+    document.getElementById('in-player-ovr').value  = '';
+    document.getElementById('in-player-role').value = '';
+    selNewPos = ''; selNewGroup = 'starter'; addSecPos = []; addIsLoan = false;
+    document.querySelectorAll('#group-tg .tb').forEach(b=>b.classList.toggle('on',b.dataset.grp==='starter'));
+    setToggleState(document.getElementById('add-loan-toggle'), document.getElementById('add-loan-date-row'), false);
+    ['add-loan-day','add-loan-month','add-loan-year'].forEach(id => document.getElementById(id).value='');
+    initPosTg(sv);
+    openModal('modal-add-player');
+  });
+
+  document.getElementById('add-loan-toggle').addEventListener('click', () => {
+    addIsLoan = !addIsLoan;
+    setToggleState(document.getElementById('add-loan-toggle'), document.getElementById('add-loan-date-row'), addIsLoan);
+  });
+
+  document.querySelectorAll('#group-tg .tb').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selNewGroup = btn.dataset.grp;
+      document.querySelectorAll('#group-tg .tb').forEach(b=>b.classList.remove('on'));
+      btn.classList.add('on');
+    });
+  });
+
+  document.getElementById('btn-confirm-add-player').addEventListener('click', () => {
+    const sv = getSave(); if (!sv) return;
+    const name    = document.getElementById('in-player-name').value.trim();
+    if (!name) { toast(t('toast-need-name'),'err'); return; }
+    const posBtnS = document.querySelector('#position-tg [data-pos].on');
+    if (!posBtnS) { toast(t('toast-need-position'),'err'); return; }
+    const selPos  = posBtnS.dataset.pos;
+    const secPosS = [...document.querySelectorAll('#add-sec-pos-tg [data-pos].on')].map(b=>b.dataset.pos).slice(0,6);
+    if (addIsLoan) {
+      if (!document.getElementById('add-loan-month').value || !document.getElementById('add-loan-year').value)
+      { toast('Informe pelo menos mês e ano de retorno.','err'); return; }
+    }
+    const squad = getSquad(sv);
+    const finalGroup = addIsLoan ? 'loan' : selNewGroup;
+    if (finalGroup==='bench' && squad.players.filter(p=>p.group==='bench').length>=BENCH_MAX) { toast(t('toast-bench-full'),'err'); return; }
+    if (finalGroup==='out'   && squad.players.filter(p=>p.group==='out').length  >=OUT_MAX  ) { toast(t('toast-out-full'),'err');   return; }
+    squad.players.push({
+      id:uid(), name, position:selPos, group:finalGroup,
+      overall: parseInt(document.getElementById('in-player-ovr').value)||null,
+      role:    document.getElementById('in-player-role').value||null,
+      secPos:  secPosS, onLoan:addIsLoan,
+      loanReturn: addIsLoan ? {
+        day:   parseInt(document.getElementById('add-loan-day').value)||null,
+        month: parseInt(document.getElementById('add-loan-month').value)||null,
+        year:  parseInt(document.getElementById('add-loan-year').value)||null,
+      } : null,
+    });
+    save(); closeModal('modal-add-player'); renderSquad();
+    toast(`${name} ${t('toast-player-added')}`);
+  });
+
+  document.getElementById('in-player-name').addEventListener('keydown', e => {
+    if (e.key==='Enter') document.getElementById('btn-confirm-add-player').click();
+  });
+
+  // Confirm edit player
+  document.getElementById('btn-confirm-edit-player').addEventListener('click', () => {
+    const sv = getSave(); if (!sv) return;
+    const pid    = document.getElementById('edit-player-id').value;
+    const name   = document.getElementById('edit-player-name').value.trim();
+    const posBtn = document.querySelector('#edit-position-tg [data-pos].on');
+    const secPosFromTg = [...document.querySelectorAll('#edit-sec-pos-tg [data-pos].on')].map(b=>b.dataset.pos).slice(0,6);
+    if (!name)   { toast(t('toast-need-name'),'err'); return; }
+    if (!posBtn) { toast(t('toast-need-position'),'err'); return; }
+    const squad  = getSquad(sv);
+    const player = squad.players.find(p=>p.id===pid);
+    if (!player) return;
+    const editLoanOn = document.getElementById('edit-loan-toggle').classList.contains('on');
+    if (editLoanOn) {
+      if (!document.getElementById('edit-loan-month').value || !document.getElementById('edit-loan-year').value)
+      { toast('Informe pelo menos mês e ano de retorno.','err'); return; }
+    }
+    player.name     = name;
+    player.position = posBtn.dataset.pos;
+    player.overall  = parseInt(document.getElementById('edit-player-ovr').value)||null;
+    player.role     = document.getElementById('edit-player-role').value||null;
+    player.secPos   = secPosFromTg;
+    player.onLoan   = editLoanOn;
+    player.group    = editLoanOn ? 'loan' : (player.group==='loan' ? 'bench' : player.group);
+    player.loanReturn = editLoanOn ? {
+      day:   parseInt(document.getElementById('edit-loan-day').value)||null,
+      month: parseInt(document.getElementById('edit-loan-month').value)||null,
+      year:  parseInt(document.getElementById('edit-loan-year').value)||null,
+    } : null;
+    save(); closeModal('modal-edit-player'); renderSquad();
+    toast(`${name} ${t('toast-player-updated')}`);
+  });
+
+  document.getElementById('edit-loan-toggle').addEventListener('click', () => {
+    const tog = document.getElementById('edit-loan-toggle');
+    setToggleState(tog, document.getElementById('edit-loan-date-row'), !tog.classList.contains('on'));
+  });
+
+  document.getElementById('squad-tactic-select').addEventListener('change', function() {
+    const custom = document.getElementById('squad-tactic-custom');
+    this.value==='Outra' ? (custom.style.display='',custom.focus()) : (custom.style.display='none');
+  });
+
+  document.getElementById('btn-save-tactic').addEventListener('click', () => {
+    const sv = getSave(); if (!sv) { toast(t('toast-need-save'),'err'); return; }
+    const sel    = document.getElementById('squad-tactic-select').value;
+    const custom = document.getElementById('squad-tactic-custom').value.trim();
+    const tactic = sel==='Outra' ? custom : sel;
+    if (!tactic) { toast(t('toast-need-tactic'),'err'); return; }
+    getSquad(sv).tactic = tactic;
+    save(); renderSquad();
+    toast(`${t('toast-tactic-saved').replace('!','')} ${tactic}!`);
+  });
+}
+
+// ── Coach sub-tabs
+function setupCoachSubTabs() {
+  document.querySelectorAll('[data-coach]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-coach]').forEach(b => b.classList.toggle('active', b===btn));
+      const mode = btn.dataset.coach;
+      document.getElementById('coach-output').style.display      = mode==='squad' ? '' : 'none';
+      document.getElementById('coach-base-output').style.display = mode==='base'  ? '' : 'none';
+      if (mode==='base') renderCoachBase();
+    });
+  });
+}
+
+// ── openEditPlayer
+function openEditPlayer(pid) {
+  const sv = getSave(); if (!sv) return;
+  const squad  = getSquad(sv);
+  const player = squad.players.find(p=>p.id===pid);
+  if (!player) return;
+  document.getElementById('edit-player-id').value   = pid;
+  document.getElementById('edit-player-name').value = player.name;
+  document.getElementById('edit-player-ovr').value  = player.overall||'';
+  document.getElementById('edit-player-role').value = player.role||'';
+  editSecPos = [...(player.secPos||[])];
+  initEditPosTg(sv, player);
+  const isLoan = !!player.onLoan;
+  setToggleState(document.getElementById('edit-loan-toggle'), document.getElementById('edit-loan-date-row'), isLoan);
+  document.getElementById('edit-loan-day').value   = player.loanReturn?.day||'';
+  document.getElementById('edit-loan-month').value = player.loanReturn?.month||'';
+  document.getElementById('edit-loan-year').value  = player.loanReturn?.year||'';
+  openModal('modal-edit-player');
+}
+
+function removePlayer(pid) {
+  const sv = getSave(); if (!sv) return;
+  const squad  = getSquad(sv);
+  const player = squad.players.find(p=>p.id===pid);
+  if (!player) return;
+  if (!confirm(`${t('confirm-delete-player')} ${player.name}?`)) return;
+  squad.players = squad.players.filter(p=>p.id!==pid);
+  save(); renderSquad();
+  toast(`${player.name} ${t('toast-player-removed')}`, 'err');
+}
+
+// ── Base rendering
+let baseSecPos = [];
+
+function renderBaseSquad() {
+  const sv   = getSave();
+  const el   = document.getElementById('base-player-list');
+  const dash = document.getElementById('base-dashboard');
+  if (!el) return;
+  if (!sv) { el.innerHTML = '<div style="color:var(--t3);font-size:13px">Nenhum save ativo.</div>'; return; }
+  const base = getBase(sv);
+  const total  = base.length;
+  const getMaxPot = p => p.potential?.max ?? (typeof p.potential==='number' ? p.potential : 0);
+  const avgOvr = total ? Math.round(base.reduce((a,p)=>a+(p.overall||0),0)/total) : 0;
+  const avgPot = total ? Math.round(base.reduce((a,p)=>a+getMaxPot(p),0)/total) : 0;
+  const avgAge = total ? Math.round(base.reduce((a,p)=>a+(p.age||0),0)/total) : 0;
+  const gems   = base.filter(p=>getMaxPot(p)>=80).length;
+  dash.innerHTML = [
+    `<div class="stat c-green"><div class="stat-val">${total}<span style="font-size:11px;color:var(--t3)">${BASE_MAX}</span></div><div class="stat-lbl">Jogadores</div></div>`,
+    total ? `<div class="stat"><div class="stat-val">${avgOvr}</div><div class="stat-lbl">OVR Médio</div></div>` : '',
+    total ? `<div class="stat c-blue"><div class="stat-val">${avgPot}</div><div class="stat-lbl">POT Médio</div></div>` : '',
+    total ? `<div class="stat"><div class="stat-val">${avgAge}</div><div class="stat-lbl">Idade Média</div></div>` : '',
+    gems  ? `<div class="stat c-yellow"><div class="stat-val">${gems}</div><div class="stat-lbl">Jóias (80+)</div></div>` : '',
+  ].join('');
+  if (!base.length) { el.innerHTML = `<div style="color:var(--t3);font-size:13px;text-align:center;padding:20px;font-style:italic">Nenhum jogador na base.</div>`; return; }
+  const sorted = [...base].sort((a,b) => { const d=(b.overall||0)-(a.overall||0); return d!==0?d:(a.age||99)-(b.age||99); });
+  el.innerHTML = sorted.map(p => {
+    const potLabel = (() => { const pot=p.potential; if(!pot)return null; if(typeof pot==='object'&&pot.min!=null&&pot.max!=null){return pot.min===pot.max?`${pot.max}`:`${pot.min}–${pot.max}`;} if(typeof pot==='number')return`${pot}`; return null; })();
+    const pot  = potLabel ? `<span class="base-pot" title="Potencial">${potLabel}</span>` : '';
+    const val  = p.value ? `<span class="base-value">${p.value}M€</span>` : '';
+    const age  = p.age   ? `<span class="base-age">${p.age}a</span>` : '';
+    const secP = (p.secPos||[]).map(s=>`<span class="sec-pos-tag">${s}</span>`).join('');
+    return `<div class="base-card">
+      ${p.overall?`<span class="ovr-badge">${p.overall}</span>`:''}
+      ${pot}
+      <div class="base-info">
+        <div class="base-name">${p.name}</div>
+        <div class="base-meta">${p.position}${secP?'&nbsp;·&nbsp;':''}<span class="sec-pos-wrap" style="display:inline-flex;gap:3px">${secP}</span></div>
+      </div>
+      ${age}${val}
+      <button class="pact" onclick="openEditBasePlayer('${p.id}')" title="Editar">✏️</button>
+      <button class="pact del" onclick="removeBasePlayer('${p.id}')" title="Remover">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function openEditBasePlayer(pid) {
+  const sv = getSave(); if (!sv) return;
+  const p  = getBase(sv).find(x=>x.id===pid);
+  if (!p) return;
+  document.getElementById('base-modal-title').textContent = '✏️ Editar Jogador da Base';
+  document.getElementById('base-player-edit-id').value    = pid;
+  document.getElementById('base-player-name').value       = p.name;
+  document.getElementById('base-player-pos').value        = p.position||'';
+  document.getElementById('base-player-age').value        = p.age||'';
+  document.getElementById('base-player-ovr').value        = p.overall||'';
+  document.getElementById('base-player-pot-min').value    = p.potential?.min ?? (typeof p.potential==='number'?p.potential:'');
+  document.getElementById('base-player-pot-max').value    = p.potential?.max??'';
+  document.getElementById('base-player-value').value      = p.value||'';
+  baseSecPos = [...(p.secPos||[])];
+  initBasePosTg(sv, p.secPos||[]);
+  openModal('modal-add-base-player');
+}
+window.openEditBasePlayer = openEditBasePlayer;
+
+function removeBasePlayer(pid) {
+  const sv = getSave(); if (!sv) return;
+  if (!confirm('Remover este jogador da base?')) return;
+  sv.base = (sv.base||[]).filter(p=>p.id!==pid);
+  save(); renderBaseSquad();
+  toast('Jogador removido da base.','err');
+}
+window.removeBasePlayer = removeBasePlayer;
+
+// ── openSwapModal
 function openSwapModal(movingPid, targetGroup, squad) {
   const roleLabel = { crucial:'Crucial', important:'Importante', sporadic:'Esporádico', prospect:'Promessa', rotation:'Rodízio' };
 
@@ -6075,6 +5376,161 @@ function setToggle(groupId, val) {
 // ═══════════════════════════════════════════
 //  EVENTS
 // ═══════════════════════════════════════════
+// ── View toggle setup
+function setupViewToggle() {
+  document.querySelectorAll('.view-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentView = btn.dataset.view;
+      document.querySelectorAll('.view-toggle-btn').forEach(b =>
+        b.classList.toggle('active', b === btn));
+      const listEl  = document.getElementById('list-view');
+      const fieldEl = document.getElementById('field-view');
+      if (currentView === 'list') {
+        fieldEl.style.display = 'none';
+        listEl.style.display  = '';
+      } else {
+        listEl.style.display  = 'none';
+        fieldEl.style.display = 'block';
+        requestAnimationFrame(() => requestAnimationFrame(() => renderFieldView()));
+      }
+    });
+  });
+}
+
+// ── Squad section tab setup (Elenco | Base | Coach)
+let activeSquadSection = 'roster';
+
+function setupSquadSectionTabs() {
+  document.querySelectorAll('#squad-section-tabs .squad-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeSquadSection = btn.dataset.section;
+      document.querySelectorAll('#squad-section-tabs .squad-tab').forEach(b =>
+        b.classList.toggle('active', b.dataset.section === activeSquadSection));
+      ['roster','base','analysis'].forEach(sec => {
+        const el = document.getElementById(`squad-section-${sec}`);
+        if (el) el.style.display = sec === activeSquadSection ? '' : 'none';
+      });
+      if (activeSquadSection === 'base')     renderBaseSquad();
+      if (activeSquadSection === 'analysis') { renderCoach(); setupCoachSubTabs(); }
+    });
+  });
+}
+
+// ── Secondary positions for edit player (multi-select, max 6)
+let editSecPos = [];
+
+function setupEditSecPosEvents() {
+  document.querySelectorAll('#edit-sec-pos-tg .tb').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pos = btn.dataset.pos;
+      if (editSecPos.includes(pos)) {
+        editSecPos = editSecPos.filter(p => p !== pos);
+        btn.classList.remove('on');
+      } else if (editSecPos.length < 6) {
+        editSecPos.push(pos);
+        btn.classList.add('on');
+      } else {
+        toast('Máximo 6 posições secundárias.', 'err');
+      }
+    });
+  });
+}
+
+// ── Base squad events
+function setupBaseEvents() {
+  document.getElementById('btn-add-base-player').addEventListener('click', () => {
+    const sv = getSave();
+    if (!sv) { toast(t('toast-need-save'), 'err'); return; }
+    if (getBase(sv).length >= BASE_MAX) { toast(`Base cheia! Máximo ${BASE_MAX} jogadores.`, 'err'); return; }
+    document.getElementById('base-modal-title').textContent = '🌱 Adicionar Jogador da Base';
+    document.getElementById('base-player-edit-id').value = '';
+    ['base-player-name','base-player-age','base-player-ovr','base-player-pot-min','base-player-pot-max','base-player-value'].forEach(id =>
+      document.getElementById(id).value = '');
+    document.getElementById('base-player-pos').value = '';
+    baseSecPos = [];
+    document.querySelectorAll('#base-sec-pos-tg .tb').forEach(b => b.classList.remove('on'));
+    initBasePosTg(sv, []);
+    openModal('modal-add-base-player');
+  });
+
+  document.querySelectorAll('#base-sec-pos-tg .tb').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pos = btn.dataset.pos;
+      if (baseSecPos.includes(pos)) {
+        baseSecPos = baseSecPos.filter(p => p !== pos);
+        btn.classList.remove('on');
+      } else if (baseSecPos.length < 6) {
+        baseSecPos.push(pos);
+        btn.classList.add('on');
+      } else {
+        toast('Máximo 6 posições secundárias.', 'err');
+      }
+    });
+  });
+
+  document.getElementById('btn-confirm-base-player').addEventListener('click', () => {
+    const sv = getSave(); if (!sv) return;
+    const name = document.getElementById('base-player-name').value.trim();
+    if (!name) { toast('Digite o nome do jogador.', 'err'); return; }
+    const pos  = document.getElementById('base-player-pos').value;
+    if (!pos) { toast('Selecione a posição.', 'err'); return; }
+
+    const potMin = parseInt(document.getElementById('base-player-pot-min').value) || null;
+    const potMax = parseInt(document.getElementById('base-player-pot-max').value) || null;
+    if (potMin && potMax && potMin > potMax) {
+      toast('Potencial mínimo não pode ser maior que o máximo.', 'err'); return;
+    }
+    const potential = (potMin || potMax) ? { min: potMin || potMax, max: potMax || potMin } : null;
+
+    const editId = document.getElementById('base-player-edit-id').value;
+    const data = {
+      id:        editId || uid(),
+      name,
+      position:  pos,
+      age:       parseInt(document.getElementById('base-player-age').value)   || null,
+      overall:   parseInt(document.getElementById('base-player-ovr').value)   || null,
+      potential,
+      value:     parseFloat(document.getElementById('base-player-value').value) || null,
+      secPos:    [...document.querySelectorAll('#base-sec-pos-tg [data-pos].on')].map(b=>b.dataset.pos).slice(0,6),
+    };
+
+    const base = getBase(sv);
+    if (editId) {
+      const idx = base.findIndex(p => p.id === editId);
+      if (idx >= 0) base[idx] = data;
+    } else {
+      if (base.length >= BASE_MAX) { toast(`Base cheia! Máximo ${BASE_MAX} jogadores.`, 'err'); return; }
+      base.push(data);
+    }
+    save();
+    closeModal('modal-add-base-player');
+    renderBaseSquad();
+    toast(editId ? `${name} atualizado!` : `${name} adicionado à base!`);
+  });
+
+  document.getElementById('base-player-name').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-confirm-base-player').click();
+  });
+}
+
+// ── Objectives events
+function setupObjectivesEvents() {
+  const btn   = document.getElementById('btn-add-objective');
+  const input = document.getElementById('in-obj-text');
+  if (!btn || !input) return;
+  const doAdd = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    const sv = getSave(); const season = getSeason(sv);
+    if (!season) { toast(t('toast-need-season'), 'err'); return; }
+    addObjective(text);
+    input.value = '';
+    input.focus();
+  };
+  btn.addEventListener('click', doAdd);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doAdd(); });
+}
+
 function setup() {
   // Tabs
   document.querySelectorAll('.tab').forEach(t => {
