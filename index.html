@@ -843,6 +843,107 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
   .score-num{font-size:44px}
 }
 
+
+/* ─── VIEW TOGGLE ─── */
+.view-toggle{display:flex;gap:0;border-radius:7px;overflow:hidden;border:1px solid var(--border2);flex-shrink:0;}
+.view-toggle-btn{
+  padding:5px 14px;font-size:12px;font-weight:700;font-family:var(--font-b);
+  border:none;cursor:pointer;background:var(--bg3);color:var(--t3);transition:.15s;
+}
+.view-toggle-btn.active{background:var(--green-d);color:var(--green);}
+
+/* ─── FIELD VIEW ─── */
+#field-view{display:none;position:relative;}
+.field-pitch{
+  position:relative;width:100%;max-width:640px;margin:0 auto;
+  background:linear-gradient(180deg,#1a2e1a 0%,#1e341e 50%,#1a2e1a 100%);
+  border-radius:12px;overflow:hidden;
+  border:2px solid rgba(255,255,255,.08);
+  box-shadow:0 8px 32px rgba(0,0,0,.4);
+}
+/* Pitch lines */
+.field-pitch::before{
+  content:'';position:absolute;inset:12px;
+  border:2px solid rgba(255,255,255,.15);border-radius:4px;pointer-events:none;z-index:0;
+}
+.pitch-center-circle{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:80px;height:80px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.12);pointer-events:none;z-index:0;
+}
+.pitch-center-line{
+  position:absolute;left:12px;right:12px;top:50%;
+  border-top:2px solid rgba(255,255,255,.12);pointer-events:none;z-index:0;
+}
+.pitch-penalty-top,.pitch-penalty-bot{
+  position:absolute;left:50%;transform:translateX(-50%);
+  width:180px;height:55px;
+  border:2px solid rgba(255,255,255,.1);pointer-events:none;z-index:0;
+}
+.pitch-penalty-top{top:12px;border-top:none;}
+.pitch-penalty-bot{bottom:12px;border-bottom:none;}
+
+/* Player spot on pitch */
+.pitch-player{
+  position:absolute;transform:translate(-50%,-50%);z-index:2;
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  cursor:grab;user-select:none;transition:transform .2s;
+}
+.pitch-player:active{cursor:grabbing;transform:translate(-50%,-50%) scale(1.05);}
+.pitch-player.drag-over{transform:translate(-50%,-50%) scale(1.08);filter:brightness(1.2);}
+.pitch-player.dragging{opacity:.4;}
+.pitch-card{
+  width:54px;padding:5px 4px 4px;border-radius:7px;text-align:center;
+  background:rgba(15,20,30,.85);border:1px solid rgba(255,255,255,.15);
+  backdrop-filter:blur(4px);transition:border-color .2s,box-shadow .2s;
+  box-shadow:0 2px 8px rgba(0,0,0,.4);
+}
+.pitch-card:hover{border-color:rgba(35,209,139,.6);box-shadow:0 0 12px rgba(35,209,139,.25);}
+.pitch-card.drop-target{border-color:rgba(35,209,139,.8);box-shadow:0 0 16px rgba(35,209,139,.35);}
+.pitch-card.swapped{animation:pitchSwap .5s ease;}
+@keyframes pitchSwap{
+  0%{box-shadow:0 0 0 rgba(35,209,139,0);}
+  40%{box-shadow:0 0 20px rgba(35,209,139,.6);}
+  100%{box-shadow:0 0 0 rgba(35,209,139,0);}
+}
+.pitch-pos{
+  font-family:var(--font-h);font-size:10px;font-weight:800;
+  padding:1px 5px;border-radius:3px;margin-bottom:2px;display:inline-block;
+}
+.pitch-ovr{font-family:var(--font-h);font-size:13px;font-weight:800;color:var(--yellow);line-height:1;}
+.pitch-name{font-size:9px;font-weight:700;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50px;margin-top:1px;}
+.pitch-role{font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;margin-top:2px;display:inline-block;}
+.pitch-empty-slot{
+  width:54px;height:72px;border-radius:7px;
+  border:1.5px dashed rgba(255,255,255,.18);
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;color:rgba(255,255,255,.25);font-weight:600;
+  background:rgba(255,255,255,.03);transition:.2s;
+}
+.pitch-empty-slot.drop-target{
+  border-color:rgba(35,209,139,.6);background:rgba(35,209,139,.08);color:var(--green);
+}
+
+/* Subs bar */
+.field-subs-wrap{margin-top:16px;}
+.field-subs-label{
+  font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--t3);margin-bottom:8px;display:flex;align-items:center;gap:8px;
+}
+.field-subs-label::after{content:'';flex:1;height:1px;background:var(--border);}
+.field-subs-row{display:flex;gap:8px;flex-wrap:wrap;}
+.field-sub-card{
+  display:flex;align-items:center;gap:6px;padding:6px 10px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+  cursor:grab;transition:.15s;min-width:0;
+}
+.field-sub-card:hover{border-color:var(--border2);}
+.field-sub-card.dragging{opacity:.4;}
+.field-sub-card.drag-over{border-color:var(--green);background:var(--green-d);}
+.field-sub-card-info{min-width:0;}
+.field-sub-card-name{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px;}
+.field-sub-card-meta{font-size:10px;color:var(--t3);}
+
 /* ─── SQUAD TABS ─── */
 .squad-tabs{display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid var(--border2);margin-bottom:20px;}
 .squad-tab{
@@ -1202,7 +1303,7 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
               <div class="stats-card-title" style="margin-bottom:4px" data-i18n="formation-title">🗂 Formação Atual</div>
               <div id="squad-tactic-display" class="squad-tactic-val">—</div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <select class="fi" id="squad-tactic-select" style="width:auto;min-width:110px">
                 <option value="" data-i18n="select-option">Selecione</option>
                 <option value="4-4-2">4-4-2</option><option value="4-3-3">4-3-3</option>
@@ -1214,9 +1315,17 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
               </select>
               <input class="fi" id="squad-tactic-custom" placeholder="ex: 4-1-2-1-2" style="display:none;width:130px">
               <button class="btn btn-primary btn-sm" id="btn-save-tactic" data-i18n="btn-save">Salvar</button>
+              <!-- View toggle -->
+              <div class="view-toggle" id="view-toggle">
+                <button class="view-toggle-btn active" data-view="list" id="btn-view-list">☰ Lista</button>
+                <button class="view-toggle-btn" data-view="field" id="btn-view-field">⬛ Campo</button>
+              </div>
             </div>
           </div>
         </div>
+
+      <!-- LIST VIEW -->
+      <div id="list-view">
       <div class="squad-groups">
         <div class="squad-group" id="group-starter">
           <div class="squad-group-hdr">
@@ -1246,7 +1355,26 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
           </div>
           <div class="squad-group-list" id="list-loan"></div>
         </div>
-      </div>
+      </div><!-- /squad-groups -->
+      </div><!-- /list-view -->
+
+      <!-- FIELD VIEW -->
+      <div id="field-view">
+        <div class="field-pitch" id="pitch-canvas">
+          <div class="pitch-center-circle"></div>
+          <div class="pitch-center-line"></div>
+          <div class="pitch-penalty-top"></div>
+          <div class="pitch-penalty-bot"></div>
+          <!-- Players injected by JS -->
+        </div>
+        <div class="field-subs-wrap">
+          <div class="field-subs-label" data-i18n="field-bench">🪑 Banco</div>
+          <div class="field-subs-row" id="field-bench-row"></div>
+          <div class="field-subs-label" style="margin-top:14px" data-i18n="field-out">📋 Não relacionados</div>
+          <div class="field-subs-row" id="field-out-row"></div>
+        </div>
+      </div><!-- /field-view -->
+
       </div><!-- /squad-section-roster -->
 
       <!-- BASE SECTION -->
@@ -2174,6 +2302,13 @@ const translations = {
     'toast-need-save':      'Ative um save primeiro.',
     'toast-bench-full':     'Banco cheio! Máximo 9 jogadores.',
     'toast-out-full':       'Não relacionados cheio! Máximo 20.',
+    // Field view
+    'view-list':        'Lista',
+    'view-field':       'Campo',
+    'field-bench':      '🪑 Banco',
+    'field-out':        '📋 Não relacionados',
+    'field-drag-tip':   'Arraste para trocar posições',
+    'field-empty-slot': 'Vaga',
     // Base coach
     'base-coach-title':       '🌱 Coach da Base',
     'base-coach-no-players':  'Nenhum jogador na base. Invista em olheiros para descobrir talentos.',
@@ -2463,6 +2598,13 @@ const translations = {
     'toast-need-save':      'Activate a save first.',
     'toast-bench-full':     'Bench full! Max 9 players.',
     'toast-out-full':       'Unused squad full! Max 20.',
+    // Field view
+    'view-list':        'List',
+    'view-field':       'Field',
+    'field-bench':      '🪑 Bench',
+    'field-out':        '📋 Unused',
+    'field-drag-tip':   'Drag to swap positions',
+    'field-empty-slot': 'Empty',
     // Base coach
     'base-coach-title':       '🌱 Base Coach',
     'base-coach-no-players':  'No players in the academy. Invest in scouting to discover talent.',
@@ -2752,6 +2894,13 @@ const translations = {
     'toast-need-save':      'Activa un save primero.',
     'toast-bench-full':     '¡Banquillo lleno! Máx. 9 jugadores.',
     'toast-out-full':       '¡No convocados lleno! Máx. 20.',
+    // Field view
+    'view-list':        'Lista',
+    'view-field':       'Campo',
+    'field-bench':      '🪑 Banquillo',
+    'field-out':        '📋 No convocados',
+    'field-drag-tip':   'Arrastra para intercambiar',
+    'field-empty-slot': 'Vacante',
     // Base coach
     'base-coach-title':       '🌱 Entrenador de la Cantera',
     'base-coach-no-players':  'No hay jugadores en la cantera. Invierte en ojeadores.',
@@ -3836,6 +3985,278 @@ function setupObjectivesEvents() {
 //  SQUAD SECTION TABS
 // ═══════════════════════════════════════════
 let activeSquadSection = 'roster';
+
+// ═══════════════════════════════════════════
+//  FIELD VIEW
+// ═══════════════════════════════════════════
+
+let currentView = 'list'; // 'list' | 'field'
+let fieldDragPid = null;
+let fieldDragSource = null; // 'pitch' | 'bench' | 'out'
+
+// Formation layouts: each row is [count, yPct]
+// yPct: 0=top(attack) 100=bottom(GK)
+const FORMATION_LAYOUTS = {
+  '4-4-2':  [[2,.10],[4,.32],[4,.62],[1,.87]],
+  '4-3-3':  [[3,.10],[3,.35],[4,.63],[1,.87]],
+  '4-2-3-1':[[1,.08],[3,.28],[2,.52],[4,.72],[1,.88]],
+  '3-5-2':  [[2,.10],[3,.33],[5,.60],[1,.86]],
+  '3-4-3':  [[3,.10],[4,.35],[3,.63],[1,.87]],
+  '5-3-2':  [[2,.10],[3,.36],[5,.63],[1,.87]],
+  '5-4-1':  [[1,.10],[4,.33],[5,.62],[1,.87]],
+  '4-1-4-1':[[1,.08],[4,.28],[1,.48],[4,.68],[1,.87]],
+  '4-5-1':  [[1,.09],[5,.32],[4,.63],[1,.87]],
+};
+
+function parseFormation(tactic) {
+  if (!tactic) return null;
+  const match = tactic.match(/[\d]+(?:-[\d]+)+/);
+  if (!match) return null;
+  const key = match[0];
+  if (FORMATION_LAYOUTS[key]) return FORMATION_LAYOUTS[key];
+  // Build generic layout from numbers
+  const parts = key.split('-').map(Number).reverse(); // GK first
+  const total  = parts.reduce((a,b) => a+b, 0);
+  const yStep  = 0.85 / (parts.length);
+  return parts.map((cnt, i) => [cnt, 0.88 - i * yStep]);
+}
+
+function getRoleStyle(role) {
+  const map = {
+    crucial:   { cls:'role-crucial',   bg:'rgba(240,79,94,.2)',   color:'var(--red)'   },
+    important: { cls:'role-important', bg:'rgba(35,209,139,.15)', color:'var(--green)' },
+    sporadic:  { cls:'role-sporadic',  bg:'rgba(255,255,255,.07)',color:'var(--t3)'    },
+    prospect:  { cls:'role-prospect',  bg:'rgba(79,158,255,.15)', color:'var(--blue)'  },
+    rotation:  { cls:'role-rotation',  bg:'rgba(245,183,49,.15)', color:'var(--yellow)'},
+  };
+  return map[role] || null;
+}
+
+function getPosColor(pos) {
+  const p = (pos||'').toUpperCase();
+  if (/GOL|GK/.test(p)) return { bg:'rgba(255,165,0,.25)', color:'#ffaa33' };
+  if (/ZAG|CB|LD|LE|RB|LB|RWB|LWB|ALA/.test(p)) return { bg:'rgba(79,158,255,.25)', color:'var(--blue)' };
+  if (/VOL|CDM|MC|CM|MEI|CAM|MD|ME|RM|LM/.test(p)) return { bg:'rgba(35,209,139,.2)', color:'var(--green)' };
+  return { bg:'rgba(240,79,94,.2)', color:'var(--red)' };
+}
+
+function buildPitchCard(p) {
+  const posC    = getPosColor(p.position);
+  const roleS   = getRoleStyle(p.role);
+  const ovrHtml = p.overall ? `<div class="pitch-ovr">${p.overall}</div>` : '';
+  const roleHtml= roleS ? `<div class="pitch-role" style="background:${roleS.bg};color:${roleS.color}">${roleS.cls.replace('role-','').toUpperCase().slice(0,4)}</div>` : '';
+  const lastName = p.name.includes('.') ? p.name : (p.name.split(' ').pop() || p.name);
+  return `
+    <div class="pitch-pos" style="background:${posC.bg};color:${posC.color}">${p.position}</div>
+    ${ovrHtml}
+    <div class="pitch-name">${lastName}</div>
+    ${roleHtml}
+  `;
+}
+
+function renderFieldView() {
+  const sv = getSave(); if (!sv) return;
+  const squad = getSquad(sv);
+  const canvas = document.getElementById('pitch-canvas');
+  const benchRow = document.getElementById('field-bench-row');
+  const outRow   = document.getElementById('field-out-row');
+  if (!canvas) return;
+
+  const starters = sortSquadPlayers(squad.players.filter(p => p.group==='starter'));
+  const bench    = sortSquadPlayers(squad.players.filter(p => p.group==='bench'));
+  const out      = sortSquadPlayers(squad.players.filter(p => p.group==='out'));
+
+  const formation = parseFormation(getSquad(sv).tactic);
+  const pitchH    = Math.max(420, Math.min(600, canvas.offsetWidth * 1.35));
+  canvas.style.height = pitchH + 'px';
+
+  // Remove old pitch players
+  canvas.querySelectorAll('.pitch-player').forEach(el => el.remove());
+
+  // Place starters on pitch using formation layout
+  if (formation) {
+    let si = 0;
+    formation.forEach(([count, yPct]) => {
+      for (let i = 0; i < count; i++) {
+        const player = starters[si] || null;
+        si++;
+        const xPct = count === 1 ? 0.5 : 0.1 + (0.8 / (count-1||1)) * i;
+        const spot = document.createElement('div');
+        spot.className = 'pitch-player';
+        spot.style.left = (xPct * 100) + '%';
+        spot.style.top  = (yPct * 100) + '%';
+
+        if (player) {
+          spot.dataset.pid = player.id;
+          spot.dataset.group = 'starter';
+          spot.innerHTML = `<div class="pitch-card">${buildPitchCard(player)}</div>`;
+          spot.draggable = true;
+          addPitchDragEvents(spot);
+        } else {
+          spot.innerHTML = `<div class="pitch-empty-slot"><span>${t('field-empty-slot')}</span></div>`;
+          addDropTargetEvents(spot, 'starter');
+        }
+        canvas.appendChild(spot);
+      }
+    });
+  } else {
+    // No formation: grid layout
+    starters.forEach((p, i) => {
+      const cols = Math.ceil(Math.sqrt(starters.length));
+      const xPct = 0.1 + (0.8 / (cols-1||1)) * (i % cols);
+      const yPct = 0.12 + 0.25 * Math.floor(i / cols);
+      const spot = document.createElement('div');
+      spot.className = 'pitch-player';
+      spot.style.left = (xPct*100)+'%';
+      spot.style.top  = (yPct*100)+'%';
+      spot.dataset.pid = p.id;
+      spot.dataset.group = 'starter';
+      spot.innerHTML = `<div class="pitch-card">${buildPitchCard(p)}</div>`;
+      spot.draggable = true;
+      addPitchDragEvents(spot);
+      canvas.appendChild(spot);
+    });
+  }
+
+  // Bench row
+  benchRow.innerHTML = '';
+  bench.forEach(p => benchRow.appendChild(buildSubCard(p, 'bench')));
+  if (!bench.length) benchRow.innerHTML = `<div style="color:var(--t3);font-size:12px;font-style:italic">Sem jogadores no banco</div>`;
+
+  // Out row
+  outRow.innerHTML = '';
+  out.forEach(p => outRow.appendChild(buildSubCard(p, 'out')));
+  if (!out.length) outRow.innerHTML = `<div style="color:var(--t3);font-size:12px;font-style:italic">Sem jogadores</div>`;
+}
+
+function buildSubCard(p, group) {
+  const posC  = getPosColor(p.position);
+  const card  = document.createElement('div');
+  card.className = 'field-sub-card';
+  card.dataset.pid   = p.id;
+  card.dataset.group = group;
+  card.draggable = true;
+  card.innerHTML = `
+    <div class="pitch-pos" style="background:${posC.bg};color:${posC.color};font-size:9px;padding:1px 5px">${p.position}</div>
+    ${p.overall ? `<span class="ovr-badge" style="font-size:11px">${p.overall}</span>` : ''}
+    <div class="field-sub-card-info">
+      <div class="field-sub-card-name">${p.name}</div>
+      <div class="field-sub-card-meta">${p.role ? p.role : ''}</div>
+    </div>
+  `;
+  addSubDragEvents(card);
+  return card;
+}
+
+// ── Drag & Drop for pitch players
+function addPitchDragEvents(el) {
+  el.addEventListener('dragstart', e => {
+    fieldDragPid    = el.dataset.pid;
+    fieldDragSource = el.dataset.group || 'starter';
+    el.querySelector('.pitch-card')?.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  el.addEventListener('dragend', () => {
+    el.querySelector('.pitch-card')?.classList.remove('dragging');
+    fieldDragPid = null; fieldDragSource = null;
+    document.querySelectorAll('.drop-target').forEach(x => x.classList.remove('drop-target'));
+  });
+  el.addEventListener('dragover', e => { e.preventDefault(); el.querySelector('.pitch-card')?.classList.add('drop-target'); });
+  el.addEventListener('dragleave', () => el.querySelector('.pitch-card')?.classList.remove('drop-target'));
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    el.querySelector('.pitch-card')?.classList.remove('drop-target');
+    if (!fieldDragPid || fieldDragPid === el.dataset.pid) return;
+    doFieldSwap(fieldDragPid, fieldDragSource, el.dataset.pid, el.dataset.group || 'starter');
+  });
+}
+
+// ── Drop events for empty pitch slots
+function addDropTargetEvents(slotEl, targetGroup) {
+  slotEl.addEventListener('dragover', e => { e.preventDefault(); slotEl.querySelector('.pitch-empty-slot')?.classList.add('drop-target'); });
+  slotEl.addEventListener('dragleave', () => slotEl.querySelector('.pitch-empty-slot')?.classList.remove('drop-target'));
+  slotEl.addEventListener('drop', e => {
+    e.preventDefault();
+    slotEl.querySelector('.pitch-empty-slot')?.classList.remove('drop-target');
+    if (!fieldDragPid) return;
+    const sv = getSave(); if (!sv) return;
+    const squad = getSquad(sv);
+    const p = squad.players.find(x => x.id === fieldDragPid);
+    if (p) { p.group = 'starter'; save(); renderSquad(); renderFieldView(); }
+  });
+}
+
+// ── Drag events for sub cards
+function addSubDragEvents(el) {
+  el.addEventListener('dragstart', e => {
+    fieldDragPid    = el.dataset.pid;
+    fieldDragSource = el.dataset.group;
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging');
+    fieldDragPid = null; fieldDragSource = null;
+    document.querySelectorAll('.drag-over').forEach(x => x.classList.remove('drag-over'));
+  });
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    el.classList.remove('drag-over');
+    if (!fieldDragPid || fieldDragPid === el.dataset.pid) return;
+    doFieldSwap(fieldDragPid, fieldDragSource, el.dataset.pid, el.dataset.group);
+  });
+}
+
+// ── Core swap logic for field view
+function doFieldSwap(pid1, group1, pid2, group2) {
+  const sv = getSave(); if (!sv) return;
+  const squad = getSquad(sv);
+  const p1 = squad.players.find(p => p.id === pid1);
+  const p2 = squad.players.find(p => p.id === pid2);
+  if (!p1 || !p2) return;
+
+  // Check limits
+  const benchCount = squad.players.filter(p=>p.group==='bench'&&p.id!==pid1&&p.id!==pid2).length;
+  const outCount   = squad.players.filter(p=>p.group==='out'  &&p.id!==pid1&&p.id!==pid2).length;
+  if (group1==='starter' && group2==='bench' && benchCount>=BENCH_MAX) { toast(t('toast-bench-full'),'err'); return; }
+  if (group1==='starter' && group2==='out'   && outCount  >=OUT_MAX  ) { toast(t('toast-out-full'),'err');   return; }
+
+  p1.group = group2;
+  p2.group = group1;
+  save();
+  renderSquad();
+  renderFieldView();
+  toast(`⇄ ${p1.name} ↔ ${p2.name}`);
+
+  // Flash animation
+  requestAnimationFrame(() => {
+    [pid1, pid2].forEach((pid, idx) => {
+      const cards = document.querySelectorAll(`[data-pid="${pid}"] .pitch-card, [data-pid="${pid}"].field-sub-card`);
+      cards.forEach(c => {
+        c.classList.add('swapped');
+        c.addEventListener('animationend', () => c.classList.remove('swapped'), { once: true });
+      });
+    });
+  });
+}
+
+// ── View toggle setup
+function setupViewToggle() {
+  document.querySelectorAll('.view-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentView = btn.dataset.view;
+      document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
+      document.getElementById('list-view').style.display  = currentView === 'list'  ? '' : 'none';
+      document.getElementById('field-view').style.display = currentView === 'field' ? '' : 'none';
+      if (currentView === 'field') {
+        // Small delay so layout is computed before pitch height calc
+        requestAnimationFrame(() => renderFieldView());
+      }
+    });
+  });
+}
 
 function setupSquadSectionTabs() {
   document.querySelectorAll('#squad-section-tabs .squad-tab').forEach(btn => {
@@ -4935,6 +5356,9 @@ function renderSquad() {
   // ── Render transfer history & refresh transfer player suggestions
   refreshTxPlayerSuggestions();
   renderTransferHistory();
+
+  // ── If field view is active, refresh it too
+  if (currentView === 'field') requestAnimationFrame(() => renderFieldView());
 }
 
 function renderGroupList(elId, players, currentGroup) {
@@ -5667,6 +6091,9 @@ function setup() {
 
   // ── Squad section tabs ──
   setupSquadSectionTabs();
+
+  // ── Field view toggle ──
+  setupViewToggle();
 
   // ── Secondary positions for edit player ──
   setupEditSecPosEvents();
