@@ -2111,6 +2111,15 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
 
 <script type="module">
 // ═══════════════════════════════════════════
+//  FIREBASE — imports DEVEM estar no topo do módulo
+// ═══════════════════════════════════════════
+import { initializeApp }                          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword,
+         signInWithEmailAndPassword, signOut,
+         onAuthStateChanged }                     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc }      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ═══════════════════════════════════════════
 //  i18n — TRANSLATION SYSTEM
 // ═══════════════════════════════════════════
 const LANG_KEY = 'fct_lang';
@@ -3088,20 +3097,14 @@ document.getElementById('lang-selector').addEventListener('click', e => {
 const KEY = 'fct_v1';
 let db = { saves: [], activeId: null };
 let sHome = 0, sAway = 0;
-let selVenue = 'Casa';
+let selVenue = 'Home';
 let activeFilter = 'all';
 let detailMatchId = null;
 let pendingGoals = [];
 
 // ═══════════════════════════════════════════
-//  FIREBASE
+//  FIREBASE — config e inicialização
 // ═══════════════════════════════════════════
-import { initializeApp }                          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword,
-         signInWithEmailAndPassword, signOut,
-         onAuthStateChanged }                     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc }      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
 const firebaseConfig = {
   apiKey:            "AIzaSyDxYNn-RhvWb2tOpJmEvtEpB-ukKT5c1xY",
   authDomain:        "tracker-fc.firebaseapp.com",
@@ -3117,6 +3120,7 @@ const fsdb   = getFirestore(fbApp);
 
 let currentUser = null;
 let saveTimer   = null;
+let _appBooted  = false;  // guard: setup() só roda uma vez
 
 // ── Load data from Firestore for logged-in user
 async function loadFromCloud() {
@@ -4603,130 +4607,9 @@ function movePlayer(pid, newGroup) {
   toast(`${player.name} ${t('toast-moved-to')} ${dest}.`);
 }
 
-function refreshSquadDatalist(players) {
-  const dl = document.getElementById('player-suggestions');
-  if (!dl) return;
-  dl.innerHTML = (players||[]).map(p=>`<option value="${p.name}">`).join('');
-}
+// refreshSquadDatalist — definição canônica abaixo (evitar duplicata)
 
-// ── Squad events
-function setupSquadEvents() {
-  document.getElementById('btn-open-add-player').addEventListener('click', () => {
-    const sv = getSave();
-    if (!sv) { toast(t('toast-need-save'),'err'); return; }
-    document.getElementById('in-player-name').value = '';
-    document.getElementById('in-player-ovr').value  = '';
-    document.getElementById('in-player-role').value = '';
-    selNewPos = ''; selNewGroup = 'starter'; addSecPos = []; addIsLoan = false;
-    document.querySelectorAll('#group-tg .tb').forEach(b=>b.classList.toggle('on',b.dataset.grp==='starter'));
-    setToggleState(document.getElementById('add-loan-toggle'), document.getElementById('add-loan-date-row'), false);
-    ['add-loan-day','add-loan-month','add-loan-year'].forEach(id => document.getElementById(id).value='');
-    initPosTg(sv);
-    openModal('modal-add-player');
-  });
-
-  document.getElementById('add-loan-toggle').addEventListener('click', () => {
-    addIsLoan = !addIsLoan;
-    setToggleState(document.getElementById('add-loan-toggle'), document.getElementById('add-loan-date-row'), addIsLoan);
-  });
-
-  document.querySelectorAll('#group-tg .tb').forEach(btn => {
-    btn.addEventListener('click', () => {
-      selNewGroup = btn.dataset.grp;
-      document.querySelectorAll('#group-tg .tb').forEach(b=>b.classList.remove('on'));
-      btn.classList.add('on');
-    });
-  });
-
-  document.getElementById('btn-confirm-add-player').addEventListener('click', () => {
-    const sv = getSave(); if (!sv) return;
-    const name    = document.getElementById('in-player-name').value.trim();
-    if (!name) { toast(t('toast-need-name'),'err'); return; }
-    const posBtnS = document.querySelector('#position-tg [data-pos].on');
-    if (!posBtnS) { toast(t('toast-need-position'),'err'); return; }
-    const selPos  = posBtnS.dataset.pos;
-    const secPosS = [...document.querySelectorAll('#add-sec-pos-tg [data-pos].on')].map(b=>b.dataset.pos).slice(0,6);
-    if (addIsLoan) {
-      if (!document.getElementById('add-loan-month').value || !document.getElementById('add-loan-year').value)
-      { toast('Informe pelo menos mês e ano de retorno.','err'); return; }
-    }
-    const squad = getSquad(sv);
-    const finalGroup = addIsLoan ? 'loan' : selNewGroup;
-    if (finalGroup==='bench' && squad.players.filter(p=>p.group==='bench').length>=BENCH_MAX) { toast(t('toast-bench-full'),'err'); return; }
-    if (finalGroup==='out'   && squad.players.filter(p=>p.group==='out').length  >=OUT_MAX  ) { toast(t('toast-out-full'),'err');   return; }
-    squad.players.push({
-      id:uid(), name, position:selPos, group:finalGroup,
-      overall: parseInt(document.getElementById('in-player-ovr').value)||null,
-      role:    document.getElementById('in-player-role').value||null,
-      secPos:  secPosS, onLoan:addIsLoan,
-      loanReturn: addIsLoan ? {
-        day:   parseInt(document.getElementById('add-loan-day').value)||null,
-        month: parseInt(document.getElementById('add-loan-month').value)||null,
-        year:  parseInt(document.getElementById('add-loan-year').value)||null,
-      } : null,
-    });
-    save(); closeModal('modal-add-player'); renderSquad();
-    toast(`${name} ${t('toast-player-added')}`);
-  });
-
-  document.getElementById('in-player-name').addEventListener('keydown', e => {
-    if (e.key==='Enter') document.getElementById('btn-confirm-add-player').click();
-  });
-
-  // Confirm edit player
-  document.getElementById('btn-confirm-edit-player').addEventListener('click', () => {
-    const sv = getSave(); if (!sv) return;
-    const pid    = document.getElementById('edit-player-id').value;
-    const name   = document.getElementById('edit-player-name').value.trim();
-    const posBtn = document.querySelector('#edit-position-tg [data-pos].on');
-    const secPosFromTg = [...document.querySelectorAll('#edit-sec-pos-tg [data-pos].on')].map(b=>b.dataset.pos).slice(0,6);
-    if (!name)   { toast(t('toast-need-name'),'err'); return; }
-    if (!posBtn) { toast(t('toast-need-position'),'err'); return; }
-    const squad  = getSquad(sv);
-    const player = squad.players.find(p=>p.id===pid);
-    if (!player) return;
-    const editLoanOn = document.getElementById('edit-loan-toggle').classList.contains('on');
-    if (editLoanOn) {
-      if (!document.getElementById('edit-loan-month').value || !document.getElementById('edit-loan-year').value)
-      { toast('Informe pelo menos mês e ano de retorno.','err'); return; }
-    }
-    player.name     = name;
-    player.position = posBtn.dataset.pos;
-    player.overall  = parseInt(document.getElementById('edit-player-ovr').value)||null;
-    player.role     = document.getElementById('edit-player-role').value||null;
-    player.secPos   = secPosFromTg;
-    player.onLoan   = editLoanOn;
-    player.group    = editLoanOn ? 'loan' : (player.group==='loan' ? 'bench' : player.group);
-    player.loanReturn = editLoanOn ? {
-      day:   parseInt(document.getElementById('edit-loan-day').value)||null,
-      month: parseInt(document.getElementById('edit-loan-month').value)||null,
-      year:  parseInt(document.getElementById('edit-loan-year').value)||null,
-    } : null;
-    save(); closeModal('modal-edit-player'); renderSquad();
-    toast(`${name} ${t('toast-player-updated')}`);
-  });
-
-  document.getElementById('edit-loan-toggle').addEventListener('click', () => {
-    const tog = document.getElementById('edit-loan-toggle');
-    setToggleState(tog, document.getElementById('edit-loan-date-row'), !tog.classList.contains('on'));
-  });
-
-  document.getElementById('squad-tactic-select').addEventListener('change', function() {
-    const custom = document.getElementById('squad-tactic-custom');
-    this.value==='Outra' ? (custom.style.display='',custom.focus()) : (custom.style.display='none');
-  });
-
-  document.getElementById('btn-save-tactic').addEventListener('click', () => {
-    const sv = getSave(); if (!sv) { toast(t('toast-need-save'),'err'); return; }
-    const sel    = document.getElementById('squad-tactic-select').value;
-    const custom = document.getElementById('squad-tactic-custom').value.trim();
-    const tactic = sel==='Outra' ? custom : sel;
-    if (!tactic) { toast(t('toast-need-tactic'),'err'); return; }
-    getSquad(sv).tactic = tactic;
-    save(); renderSquad();
-    toast(`${t('toast-tactic-saved').replace('!','')} ${tactic}!`);
-  });
-}
+// setupSquadEvents — definição canônica abaixo (evitar duplicata)
 
 // ── Coach sub-tabs
 function setupCoachSubTabs() {
@@ -4741,25 +4624,7 @@ function setupCoachSubTabs() {
   });
 }
 
-// ── openEditPlayer
-function openEditPlayer(pid) {
-  const sv = getSave(); if (!sv) return;
-  const squad  = getSquad(sv);
-  const player = squad.players.find(p=>p.id===pid);
-  if (!player) return;
-  document.getElementById('edit-player-id').value   = pid;
-  document.getElementById('edit-player-name').value = player.name;
-  document.getElementById('edit-player-ovr').value  = player.overall||'';
-  document.getElementById('edit-player-role').value = player.role||'';
-  editSecPos = [...(player.secPos||[])];
-  initEditPosTg(sv, player);
-  const isLoan = !!player.onLoan;
-  setToggleState(document.getElementById('edit-loan-toggle'), document.getElementById('edit-loan-date-row'), isLoan);
-  document.getElementById('edit-loan-day').value   = player.loanReturn?.day||'';
-  document.getElementById('edit-loan-month').value = player.loanReturn?.month||'';
-  document.getElementById('edit-loan-year').value  = player.loanReturn?.year||'';
-  openModal('modal-edit-player');
-}
+// openEditPlayer — definição canônica abaixo (evitar duplicata)
 
 function removePlayer(pid) {
   const sv = getSave(); if (!sv) return;
@@ -4932,16 +4797,7 @@ function applySwap(movingPid, targetPid, movingNewGroup, targetNewGroup) {
   });
 }
 
-function removePlayer(pid) {
-  const sv = getSave(); if (!sv) return;
-  const squad = getSquad(sv);
-  const player = squad.players.find(p=>p.id===pid);
-  if (!player) return;
-  if (!confirm(`${t('confirm-delete-player')} ${player.name}?`)) return;
-  squad.players = squad.players.filter(p=>p.id!==pid);
-  save(); renderSquad();
-  toast(`${player.name} ${t('toast-player-removed')}`, 'err');
-}
+// removePlayer — definição canônica acima (evitar duplicata)
 
 // Edit player — open modal pre-filled
 function openEditPlayer(pid) {
@@ -4969,12 +4825,7 @@ function openEditPlayer(pid) {
   openModal('modal-edit-player');
 }
 
-function refreshSquadDatalist(players) {
-  // Override the existing player-suggestions datalist with squad names
-  const dl = document.getElementById('player-suggestions');
-  if (!dl) return;
-  dl.innerHTML = (players||[]).map(p=>`<option value="${p.name}">`).join('');
-}
+// refreshSquadDatalist — definição canônica acima (evitar duplicata)
 
 // ── Add player state
 let selNewPos = '', selNewGroup = 'starter', addSecPos = [], addIsLoan = false;
@@ -5398,7 +5249,7 @@ function setupViewToggle() {
 }
 
 // ── Squad section tab setup (Elenco | Base | Coach)
-let activeSquadSection = 'roster';
+// activeSquadSection já declarado acima — não redeclarar
 
 function setupSquadSectionTabs() {
   document.querySelectorAll('#squad-section-tabs .squad-tab').forEach(btn => {
@@ -5514,21 +5365,477 @@ function setupBaseEvents() {
 }
 
 // ── Objectives events
-function setupObjectivesEvents() {
-  const btn   = document.getElementById('btn-add-objective');
-  const input = document.getElementById('in-obj-text');
-  if (!btn || !input) return;
-  const doAdd = () => {
-    const text = input.value.trim();
-    if (!text) return;
-    const sv = getSave(); const season = getSeason(sv);
-    if (!season) { toast(t('toast-need-season'), 'err'); return; }
-    addObjective(text);
-    input.value = '';
-    input.focus();
-  };
-  btn.addEventListener('click', doAdd);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') doAdd(); });
+// setupObjectivesEvents — definição canônica acima usa btn-obj-add (correto)
+
+// ═══════════════════════════════════════════
+//  MATCHES PAGE
+// ═══════════════════════════════════════════
+function renderMatches() {
+  const sv     = getSave();
+  const season = getSeason(sv);
+  const el     = document.getElementById('matches-list');
+  const sub    = document.getElementById('matches-sub');
+
+  if (!season) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚽</div><div class="empty-title">${t('no-matches')}</div><div class="empty-desc">${t('no-matches-desc')}</div></div>`;
+    if (sub) sub.textContent = '';
+    return;
+  }
+
+  const ms = [...(season.matches || [])].reverse();
+  if (sub) sub.textContent = `${sv.clubName} · ${season.year} · ${ms.length} ${t('matches-label')}`;
+
+  const filtered = activeFilter === 'all' ? ms : ms.filter(m => getResult(m) === activeFilter);
+
+  if (!filtered.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚽</div><div class="empty-title">${t('no-matches')}</div><div class="empty-desc">${t('no-matches-desc')}</div></div>`;
+    return;
+  }
+
+  el.innerHTML = filtered.map(m => {
+    const r   = getResult(m);
+    const col = r==='W'?'var(--green)':r==='D'?'var(--yellow)':'var(--red)';
+    const venue = m.venue==='Home'?'🏟':m.venue==='Away'?'✈':'⚖';
+    return `<div class="match-item" data-mid="${m.id}">
+      <div class="result-badge ${r}">${resultLabel(r)}</div>
+      <div class="match-info">
+        <div class="match-opp">${venue} vs ${m.opp}</div>
+        <div class="match-meta">${m.comp || ''} · ${fmtDate(m.ts)}</div>
+      </div>
+      <div class="match-score" style="color:${col}">
+        <span class="gf">${m.gf}</span>
+        <span class="sep">–</span>
+        <span class="ga">${m.ga}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  el.querySelectorAll('.match-item').forEach(item => {
+    item.addEventListener('click', () => openMatchDetail(item.dataset.mid));
+  });
+}
+
+function openMatchDetail(mid) {
+  const sv     = getSave();
+  const season = getSeason(sv);
+  if (!season) return;
+  const m = season.matches.find(x => x.id === mid);
+  if (!m) return;
+  detailMatchId = mid;
+
+  const r   = getResult(m);
+  const col = r==='W'?'var(--green)':r==='D'?'var(--yellow)':'var(--red)';
+  const venueLabel = m.venue==='Home'?`🏟 ${t('venue-home')}`:m.venue==='Away'?`✈ ${t('venue-away')}`:`⚖ ${t('venue-neutral')}`;
+
+  function autoSum() {
+    const diff = m.gf - m.ga;
+    let base = '';
+    if (r==='W') {
+      if (diff>=3)       base = t('sum-w-dominant');
+      else if (diff===2) base = t('sum-w-comfortable');
+      else if (diff===1 && m.ga>=2) base = t('sum-w-narrow');
+      else               base = t('sum-w-solid');
+    } else if (r==='D') {
+      if (m.gf===0)      base = t('sum-d-goalless');
+      else if (m.gf>=2)  base = t('sum-d-thrilling');
+      else               base = t('sum-d-even');
+    } else {
+      if (Math.abs(diff)>=3) base = t('sum-l-heavy');
+      else if (Math.abs(diff)===1) base = t('sum-l-narrow');
+      else               base = t('sum-l-clear');
+    }
+    let poss = '';
+    if (m.possession) {
+      const p = m.possession;
+      if (p>=65)      poss = t('sum-poss-dominant');
+      else if (p>=55) poss = t('sum-poss-good');
+      else if (p>=45) poss = t('sum-poss-even');
+      else if (p>=35) poss = t('sum-poss-low');
+      else            poss = t('sum-poss-very-low');
+    }
+    let off = '';
+    if (m.shots && m.shots > 0) {
+      const eff = m.gf / m.shots;
+      if (eff >= 0.35)        off = t('sum-off-clinical');
+      else if (eff >= 0.2)    off = t('sum-off-efficient');
+      else if (m.shots >= 12) off = t('sum-off-active');
+      else                    off = t('sum-off-poor');
+    }
+    let summary = base;
+    if (poss) summary += ` ${poss}`;
+    if (off)  summary += `${poss?' '+t('sum-and'):','} ${off}`;
+    return summary + '.';
+  }
+
+  const goalsHtml = (m.goals||[]).length
+    ? (m.goals||[]).map(g=>`<div class="detail-goal">
+        <div class="detail-goal-icon">⚽</div>
+        <div>
+          <div class="detail-goal-scorer">${g.scorer}</div>
+          ${g.assist?`<div class="detail-goal-assist">🅰 ${g.assist}</div>`:''}
+        </div>
+      </div>`).join('')
+    : '';
+
+  const ratingHtml = m.rating != null
+    ? `<div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+        <span style="font-size:12px;color:var(--t3)">${t('detail-rating-label')}:</span>
+        <span style="font-family:var(--font-h);font-size:22px;font-weight:700;color:var(--yellow)">${m.rating}/10</span>
+      </div>` : '';
+
+  const bestHtml  = m.bestPlayer  ? `<div style="margin-top:8px;font-size:13px"><span style="color:var(--t3)">${t('detail-best')}:</span> 🌟 ${m.bestPlayer}</div>`  : '';
+  const worstHtml = m.worstPlayer ? `<div style="margin-top:4px;font-size:13px"><span style="color:var(--t3)">${t('detail-worst')}:</span> 📉 ${m.worstPlayer}</div>` : '';
+  const notesHtml = m.notes       ? `<div style="margin-top:10px;font-size:13px;color:var(--t2);background:var(--bg3);padding:10px 12px;border-radius:8px;line-height:1.5">${m.notes}</div>` : '';
+  const tacticHtml= m.tactic      ? `<span class="chip">${m.tactic}</span>` : '';
+  const possHtml  = m.possession  ? `<span class="chip">⚽ ${m.possession}%</span>` : '';
+  const shotsHtml = m.shots       ? `<span class="chip">🎯 ${m.shots} ${t('lbl-shots').toLowerCase()}</span>` : '';
+
+  document.getElementById('detail-title').textContent = `vs ${m.opp}`;
+  document.getElementById('detail-body').innerHTML = `
+    <div class="big-score" style="color:${col}">${m.gf} – ${m.ga}</div>
+    <div style="text-align:center;font-size:13px;color:var(--t3);margin-bottom:14px">${venueLabel} · ${m.comp||''} · ${fmtDate(m.ts)}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tacticHtml}${possHtml}${shotsHtml}</div>
+    <div style="font-size:12px;color:var(--t2);font-style:italic;margin-bottom:10px">${autoSum()}</div>
+    ${goalsHtml ? `<div class="divider"></div>${goalsHtml}` : ''}
+    ${ratingHtml}${bestHtml}${worstHtml}${notesHtml}
+  `;
+  openModal('modal-detail');
+}
+
+// ═══════════════════════════════════════════
+//  POSITION TOGGLES (dinâmicos)
+// ═══════════════════════════════════════════
+const STD_POSITIONS = ['GOL','ZAG','LD','LE','VOL','MC','MEI','PE','PD','ATA'];
+
+function getCustomPositions(sv) {
+  return sv ? (sv.customPositions || []) : [];
+}
+function allPositions(sv) {
+  return [...STD_POSITIONS, ...getCustomPositions(sv)];
+}
+function buildPosTgHTML(positions, selectedPos, tgId, isSecondary) {
+  const btns = positions.map(p => {
+    const on = selectedPos === p ? ' on' : '';
+    return `<button class="tb${on}" data-pos="${p}" style="padding:5px 10px;font-size:12px">${p}</button>`;
+  });
+  if (!isSecondary) {
+    btns.push(`<button class="tb-add-pos" id="${tgId}-add-btn" title="Adicionar posição">+ pos</button>`);
+  }
+  return btns.join('');
+}
+function wirePosTgAddBtn(tgId, sv, onAdd) {
+  const btn = document.getElementById(`${tgId}-add-btn`);
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const pos = prompt('Nome da posição (ex: MEI-D):');
+    if (!pos || !pos.trim()) return;
+    const p = pos.trim().toUpperCase().slice(0, 8);
+    if (!sv.customPositions) sv.customPositions = [];
+    if (!sv.customPositions.includes(p)) sv.customPositions.push(p);
+    save();
+    if (onAdd) onAdd(p);
+  });
+}
+
+function initPosTg(sv) {
+  const tg    = document.getElementById('position-tg');
+  const secTg = document.getElementById('add-sec-pos-tg');
+  if (!tg) return;
+  const positions = allPositions(sv);
+  tg.innerHTML    = buildPosTgHTML(positions, '', 'position-tg', false);
+  if (secTg) secTg.innerHTML = buildPosTgHTML(positions, '', 'add-sec-pos-tg', true);
+
+  tg.querySelectorAll('[data-pos]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      tg.querySelectorAll('[data-pos]').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+    });
+  });
+  if (secTg) {
+    secTg.querySelectorAll('[data-pos]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pos = btn.dataset.pos;
+        if (btn.classList.contains('on')) {
+          btn.classList.remove('on');
+          addSecPos = addSecPos.filter(p => p !== pos);
+        } else if (addSecPos.length < 6) {
+          btn.classList.add('on');
+          addSecPos.push(pos);
+        } else {
+          toast('Máximo 6 posições secundárias.', 'err');
+        }
+      });
+    });
+  }
+  wirePosTgAddBtn('position-tg', sv, () => initPosTg(sv));
+}
+
+function initEditPosTg(sv, player) {
+  const tg    = document.getElementById('edit-position-tg');
+  const secTg = document.getElementById('edit-sec-pos-tg');
+  if (!tg) return;
+  const positions = allPositions(sv);
+  tg.innerHTML    = buildPosTgHTML(positions, player?.position || '', 'edit-position-tg', false);
+  if (secTg) {
+    secTg.innerHTML = buildPosTgHTML(positions, '', 'edit-sec-pos-tg', true);
+    (player?.secPos || []).forEach(p => {
+      const b = secTg.querySelector(`[data-pos="${p}"]`);
+      if (b) b.classList.add('on');
+    });
+  }
+  tg.querySelectorAll('[data-pos]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      tg.querySelectorAll('[data-pos]').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+    });
+  });
+  if (secTg) {
+    secTg.querySelectorAll('[data-pos]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pos = btn.dataset.pos;
+        if (btn.classList.contains('on')) {
+          btn.classList.remove('on');
+          editSecPos = editSecPos.filter(p => p !== pos);
+        } else if (editSecPos.length < 6) {
+          btn.classList.add('on');
+          editSecPos.push(pos);
+        } else {
+          toast('Máximo 6 posições secundárias.', 'err');
+        }
+      });
+    });
+  }
+  wirePosTgAddBtn('edit-position-tg', sv, () => initEditPosTg(sv, player));
+}
+
+function initBasePosTg(sv, selectedSecPos) {
+  const secTg = document.getElementById('base-sec-pos-tg');
+  if (!secTg) return;
+  const positions = allPositions(sv);
+  secTg.innerHTML = buildPosTgHTML(positions, '', 'base-sec-pos-tg', true);
+  (selectedSecPos || []).forEach(p => {
+    const b = secTg.querySelector(`[data-pos="${p}"]`);
+    if (b) b.classList.add('on');
+  });
+  secTg.querySelectorAll('[data-pos]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pos = btn.dataset.pos;
+      if (btn.classList.contains('on')) {
+        btn.classList.remove('on');
+        baseSecPos = baseSecPos.filter(p => p !== pos);
+      } else if (baseSecPos.length < 6) {
+        btn.classList.add('on');
+        baseSecPos.push(pos);
+      } else {
+        toast('Máximo 6 posições secundárias.', 'err');
+      }
+    });
+  });
+}
+
+function refreshPosDropdowns(sv) {
+  refreshTxPlayerSuggestions();
+}
+
+// ═══════════════════════════════════════════
+//  TRANSFERS
+// ═══════════════════════════════════════════
+let txType = 'buy';
+let txLoanDir = 'in';
+let txLoanDur = 'short';
+
+function refreshTxPlayerSuggestions() {
+  const sv = getSave();
+  const dl = document.getElementById('tx-player-suggestions');
+  if (!dl) return;
+  dl.innerHTML = (sv?.squad?.players || []).map(p => `<option value="${p.name}">`).join('');
+}
+
+function renderTransferHistory() {
+  const sv = getSave();
+  const el = document.getElementById('tx-history-list');
+  if (!el) return;
+  const transfers = sv?.transfers || [];
+  if (!transfers.length) { el.innerHTML = ''; return; }
+  const typeLabel = { buy:'Compra', sell:'Venda', loan:'Empréstimo' };
+  const typeClass = { buy:'buy',   sell:'sell',  loan:'loan' };
+  el.innerHTML = `
+    <div class="sec-label" style="margin-top:20px">📋 Histórico de Transferências</div>
+    ${[...transfers].reverse().map(tx => {
+      const durLabel = tx.loanDur==='short'?'6 meses':tx.loanDur==='mid'?'1 ano':'2 anos';
+      const dirLabel = tx.loanDir==='in'?'📥 Recebido':'📤 Enviado';
+      const pctHtml  = tx.type==='loan'&&(tx.pctMe||tx.pctThem)
+        ? `<span style="font-size:11px;color:var(--t3)"> · ${tx.pctMe||0}% / ${tx.pctThem||0}%</span>` : '';
+      return `<div class="transfer-item">
+        <div class="tx-type-dot ${typeClass[tx.type]}"></div>
+        <div style="flex:1;min-width:0">
+          <div class="tx-name">${tx.name}</div>
+          <div class="tx-meta">${tx.position||''} · ${fmtDate(tx.ts)}${tx.type==='loan'?` · ${dirLabel} · ${durLabel}`:''}${pctHtml}</div>
+        </div>
+        ${tx.value ? `<span class="tx-value">${tx.value}M€</span>` : ''}
+        <span class="tx-tag ${typeClass[tx.type]}">${typeLabel[tx.type]}</span>
+        <button class="pact del" onclick="removeTransfer('${tx.id}')" title="Remover">✕</button>
+      </div>`;
+    }).join('')}`;
+}
+
+function removeTransfer(id) {
+  const sv = getSave(); if (!sv) return;
+  sv.transfers = (sv.transfers || []).filter(tx => tx.id !== id);
+  save(); renderTransferHistory();
+}
+window.removeTransfer = removeTransfer;
+
+function setupTransferEvents() {
+  document.querySelectorAll('.tx-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      txType = btn.dataset.txtype;
+      document.querySelectorAll('.tx-type-btn').forEach(b => b.className = 'tx-type-btn');
+      btn.classList.add(`active-${txType}`);
+      const lf = document.getElementById('tx-loan-fields');
+      if (lf) lf.style.display = txType==='loan' ? '' : 'none';
+    });
+  });
+  document.querySelectorAll('#tx-loan-dir-tg .tb').forEach(btn => {
+    btn.addEventListener('click', () => {
+      txLoanDir = btn.dataset.dir;
+      document.querySelectorAll('#tx-loan-dir-tg .tb').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+    });
+  });
+  document.querySelectorAll('#tx-loan-dur-tg .tb').forEach(btn => {
+    btn.addEventListener('click', () => {
+      txLoanDur = btn.dataset.dur;
+      document.querySelectorAll('#tx-loan-dur-tg .tb').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+    });
+  });
+  const btnReg = document.getElementById('btn-tx-register');
+  if (btnReg) {
+    btnReg.addEventListener('click', () => {
+      const sv = getSave(); if (!sv) { toast(t('toast-need-save'), 'err'); return; }
+      const name = document.getElementById('tx-player-name').value.trim();
+      if (!name) { toast(t('toast-need-name'), 'err'); return; }
+      const pos     = document.getElementById('tx-player-pos').value;
+      const ovr     = parseInt(document.getElementById('tx-overall').value)    || null;
+      const value   = parseFloat(document.getElementById('tx-value').value)    || null;
+      const pctMe   = parseFloat(document.getElementById('tx-loan-pct-me').value)   || null;
+      const pctThem = parseFloat(document.getElementById('tx-loan-pct-them').value) || null;
+      if (!sv.transfers) sv.transfers = [];
+      sv.transfers.push({
+        id: uid(), name, position: pos, type: txType,
+        overall: ovr, value,
+        loanDir: txType==='loan' ? txLoanDir : null,
+        loanDur: txType==='loan' ? txLoanDur : null,
+        pctMe:   txType==='loan' ? pctMe   : null,
+        pctThem: txType==='loan' ? pctThem : null,
+        ts: Date.now(),
+      });
+      save();
+      ['tx-player-name','tx-player-pos','tx-overall','tx-value','tx-loan-pct-me','tx-loan-pct-them']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value=''; });
+      renderTransferHistory();
+      toast(`${name} ${t('toast-team-added')}`);
+    });
+  }
+}
+
+// ═══════════════════════════════════════════
+//  COACH / ANALYSIS
+// ═══════════════════════════════════════════
+function renderCoach() {
+  const sv = getSave();
+  const el = document.getElementById('coach-output');
+  if (!el) return;
+  if (!sv) { el.innerHTML = `<div style="color:var(--t3);font-size:13px">${t('no-save-msg')}</div>`; return; }
+  const squad    = getSquad(sv);
+  const players  = squad.players.filter(p => p.group !== 'loan');
+  const starters = players.filter(p => p.group === 'starter');
+  const bench    = players.filter(p => p.group === 'bench');
+  const tips = [];
+
+  if (starters.length < 11) tips.push({type:'warn',icon:'⚠️',text:`Titulares insuficientes: ${starters.length}/11.`});
+  else if (starters.length > 11) tips.push({type:'warn',icon:'⚠️',text:`${starters.length} titulares — só 11 jogam.`});
+  else tips.push({type:'ok',icon:'✅',text:'XI inicial completo.'});
+
+  if (!starters.some(p => posCategory(p.position) === 0))
+    tips.push({type:'warn',icon:'🧤',text:'Nenhum goleiro entre os titulares!'});
+
+  if (bench.length < 5)
+    tips.push({type:'info',icon:'🪑',text:`Banco pequeno (${bench.length}). Recomendável ter ao menos 5.`});
+
+  const ovrList = starters.filter(p=>p.overall).map(p=>p.overall);
+  if (ovrList.length) {
+    const avg = Math.round(ovrList.reduce((a,b)=>a+b,0)/ovrList.length);
+    const cls = avg>=80?'ok':avg>=70?'info':'warn';
+    tips.push({type:cls,icon:'📊',text:`OVR médio dos titulares: ${avg}.`});
+  }
+
+  if (!squad.tactic) tips.push({type:'info',icon:'🗂',text:'Nenhuma formação definida.'});
+  else tips.push({type:'ok',icon:'🗂',text:`Formação: ${squad.tactic}.`});
+
+  const catNames=['Goleiros','Defensores','Meio-campistas','Atacantes'];
+  [0,1,2,3].forEach(cat => {
+    const cnt = players.filter(p=>posCategory(p.position)===cat).length;
+    if (cnt===0) tips.push({type:'warn',icon:'❗',text:`Sem ${catNames[cat]} no elenco!`});
+    else if (cnt===1) tips.push({type:'info',icon:'⚡',text:`Apenas 1 ${catNames[cat].slice(0,-1)} — sem reserva.`});
+  });
+
+  const catData=[0,1,2,3].map(cat=>{
+    const grp=starters.filter(p=>posCategory(p.position)===cat);
+    const avg=grp.length&&grp.some(p=>p.overall)
+      ?Math.round(grp.filter(p=>p.overall).reduce((a,p)=>a+p.overall,0)/grp.filter(p=>p.overall).length):null;
+    return {cat,label:catNames[cat],count:grp.length,avg};
+  });
+  const maxAvg=Math.max(...catData.filter(d=>d.avg).map(d=>d.avg),1);
+  const barHtml=catData.map(d=>{
+    if(!d.count)return'';
+    const bp=d.avg?(d.avg/maxAvg*100).toFixed(0):0;
+    const bc=d.cat===0?'#ffaa33':d.cat===1?'var(--blue)':d.cat===2?'var(--green)':'var(--red)';
+    return`<div class="analysis-row"><div class="analysis-pos">${d.label.slice(0,3).toUpperCase()}</div><div class="analysis-bar-wrap"><div class="analysis-bar-fill" style="width:${bp}%;background:${bc}"></div></div><div class="analysis-ovr">${d.avg||'—'}</div><div class="analysis-count">${d.count}x</div></div>`;
+  }).join('');
+
+  const tipsHtml=tips.map(tip=>`<div class="coach-tip ${tip.type}"><div class="coach-tip-icon">${tip.icon}</div><div class="coach-tip-text">${tip.text}</div></div>`).join('');
+  el.innerHTML=`<div class="coach-card"><div class="stats-card-title" style="margin-bottom:10px">🧠 Análise do Elenco</div>${tipsHtml}</div><div class="card" style="margin-top:10px"><div class="stats-card-title" style="margin-bottom:10px">📊 OVR por Setor</div>${barHtml||`<div style="color:var(--t3);font-size:13px">${t('no-data')}</div>`}</div>`;
+}
+
+function renderCoachBase() {
+  const sv=getSave();
+  const el=document.getElementById('coach-base-output');
+  if(!el)return;
+  if(!sv){el.innerHTML=`<div style="color:var(--t3);font-size:13px">${t('no-save-msg')}</div>`;return;}
+  const base=getBase(sv);
+  const squad=getSquad(sv);
+  const tips=[];
+  const getMaxPot=p=>p.potential?.max??(typeof p.potential==='number'?p.potential:0);
+
+  if(!base.length)          tips.push({type:'warn',icon:'🌱',text:t('base-coach-no-players')});
+  else if(base.length<5)    tips.push({type:'info',icon:'🌱',text:t('base-coach-few')});
+  else if(base.length>25)   tips.push({type:'info',icon:'🌱',text:t('base-coach-many')});
+  else                       tips.push({type:'ok',  icon:'✅',text:t('base-coach-ok')});
+
+  if(base.length){
+    const avgPot=Math.round(base.reduce((a,p)=>a+getMaxPot(p),0)/base.length);
+    if(avgPot<65)      tips.push({type:'warn',icon:'📉',text:`${t('base-coach-avg-pot')}: ${avgPot}. ${t('base-coach-pot-low')}`});
+    else if(avgPot<78) tips.push({type:'info',icon:'📊',text:`${t('base-coach-avg-pot')}: ${avgPot}. ${t('base-coach-pot-mid')}`});
+    else               tips.push({type:'ok',  icon:'🌟',text:`${t('base-coach-avg-pot')}: ${avgPot}. ${t('base-coach-pot-high')}`});
+
+    const gems=base.filter(p=>getMaxPot(p)>=80).length;
+    if(gems) tips.push({type:'ok',icon:'💎',text:`${gems} ${t('base-coach-gems')}.`});
+
+    const promotable=base.filter(p=>getMaxPot(p)>=80&&(p.overall||0)>=72);
+    if(promotable.length) tips.push({type:'info',icon:'⬆️',text:`${t('base-coach-promote')}: ${promotable.map(p=>p.name).join(', ')}.`});
+
+    const catNames=['Goleiro','Defensor','Meio-campo','Atacante'];
+    [0,1,2,3].forEach(cat=>{
+      const inBase=base.filter(p=>posCategory(p.position)===cat).length;
+      const inStart=(squad.players||[]).filter(p=>p.group==='starter'&&posCategory(p.position)===cat).length;
+      if(!inBase&&inStart>0) tips.push({type:'warn',icon:'❗',text:`${t('base-coach-pos-lack')} ${catNames[cat]}.`});
+    });
+  }
+
+  const tipsHtml=tips.map(tip=>`<div class="coach-tip ${tip.type}"><div class="coach-tip-icon">${tip.icon}</div><div class="coach-tip-text">${tip.text}</div></div>`).join('');
+  el.innerHTML=`<div class="coach-card"><div class="stats-card-title" style="margin-bottom:10px">${t('base-coach-title')}</div>${tipsHtml||`<div style="color:var(--t3);font-size:13px">${t('no-data')}</div>`}</div>`;
 }
 
 function setup() {
@@ -5748,13 +6055,12 @@ function switchAuthTab(mode) {
     ? 'Faça login para continuar'
     : 'Crie sua conta gratuita';
   const footer = document.getElementById('auth-footer');
-  const link   = document.getElementById('auth-switch-link');
   if (mode === 'login') {
     footer.innerHTML = 'Não tem conta? <a href="#" id="auth-switch-link">Cadastre-se</a>';
   } else {
     footer.innerHTML = 'Já tem conta? <a href="#" id="auth-switch-link">Entrar</a>';
   }
-  // Re-wire the new link after innerHTML replacement
+  // Re-wire o novo link gerado pelo innerHTML
   document.getElementById('auth-switch-link').addEventListener('click', e => {
     e.preventDefault();
     switchAuthTab(authMode === 'login' ? 'register' : 'login');
@@ -5810,7 +6116,8 @@ document.getElementById('btn-auth-submit').addEventListener('click', async () =>
     } else {
       await createUserWithEmailAndPassword(auth, email, password);
     }
-    // onAuthStateChanged will handle the rest
+    // onAuthStateChanged vai tratar o redirecionamento.
+    // O btn fica desabilitado intencionalmente até a tela sumir.
   } catch(e) {
     showAuthErr(getAuthErrMsg(e.code));
     btn.textContent = authMode === 'login' ? 'Entrar' : 'Criar conta';
@@ -5862,10 +6169,17 @@ onAuthStateChanged(auth, async (user) => {
     // Load this user's data from Firestore
     await loadFromCloud();
 
-    // Boot the app
-    setLang(currentLang);
-    setup();
-    applyTranslations();
+    // Boot the app apenas uma vez
+    if (!_appBooted) {
+      _appBooted = true;
+      setLang(currentLang);
+      setup();
+      applyTranslations();
+    } else {
+      // Re-login: só re-aplica traduções e atualiza UI
+      applyTranslations();
+    }
+
     updateTopbar();
     renderDash();
 
