@@ -856,10 +856,12 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
 #field-view{display:none;position:relative;}
 .field-pitch{
   position:relative;width:100%;max-width:640px;margin:0 auto;
+  aspect-ratio:3/4;
   background:linear-gradient(180deg,#1a2e1a 0%,#1e341e 50%,#1a2e1a 100%);
-  border-radius:12px;overflow:hidden;
+  border-radius:12px;overflow:visible;
   border:2px solid rgba(255,255,255,.08);
   box-shadow:0 8px 32px rgba(0,0,0,.4);
+  contain:layout;
 }
 /* Pitch lines */
 .field-pitch::before{
@@ -868,60 +870,91 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
 }
 .pitch-center-circle{
   position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-  width:80px;height:80px;border-radius:50%;
-  border:2px solid rgba(255,255,255,.12);pointer-events:none;z-index:0;
+  width:18%;padding-bottom:18%;border-radius:50%;
+  border:2px solid rgba(255,255,255,.15);pointer-events:none;z-index:0;
 }
 .pitch-center-line{
-  position:absolute;left:12px;right:12px;top:50%;
-  border-top:2px solid rgba(255,255,255,.12);pointer-events:none;z-index:0;
+  position:absolute;left:4%;right:4%;top:50%;
+  border-top:2px solid rgba(255,255,255,.15);pointer-events:none;z-index:0;
 }
 .pitch-penalty-top,.pitch-penalty-bot{
   position:absolute;left:50%;transform:translateX(-50%);
-  width:180px;height:55px;
-  border:2px solid rgba(255,255,255,.1);pointer-events:none;z-index:0;
+  width:52%;height:14%;
+  border:2px solid rgba(255,255,255,.12);pointer-events:none;z-index:0;
 }
-.pitch-penalty-top{top:12px;border-top:none;}
-.pitch-penalty-bot{bottom:12px;border-bottom:none;}
+.pitch-penalty-top{top:3%;border-top:none;}
+.pitch-penalty-bot{bottom:3%;border-bottom:none;}
+/* Grass stripes */
+.field-pitch::after{
+  content:'';position:absolute;inset:0;
+  background:repeating-linear-gradient(
+    180deg,
+    transparent 0%,
+    transparent 8.33%,
+    rgba(0,0,0,.06) 8.33%,
+    rgba(0,0,0,.06) 16.66%
+  );
+  pointer-events:none;z-index:0;border-radius:10px;
+}
 
 /* Player spot on pitch */
 .pitch-player{
   position:absolute;transform:translate(-50%,-50%);z-index:2;
   display:flex;flex-direction:column;align-items:center;gap:2px;
-  cursor:grab;user-select:none;transition:transform .2s;
+  cursor:grab;user-select:none;transition:left .3s ease, top .3s ease, transform .2s;
+  will-change:transform;
 }
-.pitch-player:active{cursor:grabbing;transform:translate(-50%,-50%) scale(1.05);}
-.pitch-player.drag-over{transform:translate(-50%,-50%) scale(1.08);filter:brightness(1.2);}
-.pitch-player.dragging{opacity:.4;}
+.pitch-player:active{cursor:grabbing;transform:translate(-50%,-50%) scale(1.06);}
+.pitch-player.drag-over .pitch-card{transform:scale(1.08);filter:brightness(1.2);}
+.pitch-player.dragging{opacity:.35;pointer-events:none;}
 .pitch-card{
-  width:54px;padding:5px 4px 4px;border-radius:7px;text-align:center;
-  background:rgba(15,20,30,.85);border:1px solid rgba(255,255,255,.15);
-  backdrop-filter:blur(4px);transition:border-color .2s,box-shadow .2s;
-  box-shadow:0 2px 8px rgba(0,0,0,.4);
+  width:60px;padding:6px 5px 5px;border-radius:8px;text-align:center;
+  background:rgba(10,16,26,.9);border:1.5px solid rgba(255,255,255,.18);
+  backdrop-filter:blur(6px);transition:border-color .18s,box-shadow .18s,transform .18s;
+  box-shadow:0 3px 10px rgba(0,0,0,.5);cursor:grab;
 }
-.pitch-card:hover{border-color:rgba(35,209,139,.6);box-shadow:0 0 12px rgba(35,209,139,.25);}
-.pitch-card.drop-target{border-color:rgba(35,209,139,.8);box-shadow:0 0 16px rgba(35,209,139,.35);}
-.pitch-card.swapped{animation:pitchSwap .5s ease;}
+.pitch-card:hover{
+  border-color:rgba(35,209,139,.7);box-shadow:0 0 14px rgba(35,209,139,.3);
+  transform:translateY(-2px);
+}
+.pitch-card.drop-target{
+  border-color:var(--green);box-shadow:0 0 18px rgba(35,209,139,.5);
+  background:rgba(35,209,139,.12);
+}
+.pitch-card.swapped{animation:pitchSwap .55s ease;}
 @keyframes pitchSwap{
-  0%{box-shadow:0 0 0 rgba(35,209,139,0);}
-  40%{box-shadow:0 0 20px rgba(35,209,139,.6);}
-  100%{box-shadow:0 0 0 rgba(35,209,139,0);}
+  0%  {box-shadow:0 0 0 rgba(35,209,139,0);border-color:rgba(255,255,255,.18);}
+  35% {box-shadow:0 0 22px rgba(35,209,139,.7);border-color:var(--green);}
+  100%{box-shadow:0 0 0 rgba(35,209,139,0);border-color:rgba(255,255,255,.18);}
 }
 .pitch-pos{
   font-family:var(--font-h);font-size:10px;font-weight:800;
-  padding:1px 5px;border-radius:3px;margin-bottom:2px;display:inline-block;
+  padding:1px 5px;border-radius:3px;margin-bottom:3px;display:inline-block;
+  letter-spacing:.3px;
 }
-.pitch-ovr{font-family:var(--font-h);font-size:13px;font-weight:800;color:var(--yellow);line-height:1;}
-.pitch-name{font-size:9px;font-weight:700;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50px;margin-top:1px;}
-.pitch-role{font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;margin-top:2px;display:inline-block;}
+.pitch-ovr{
+  font-family:var(--font-h);font-size:14px;font-weight:900;
+  color:var(--yellow);line-height:1;margin-bottom:1px;
+}
+.pitch-name{
+  font-size:9.5px;font-weight:700;color:var(--t1);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  max-width:54px;margin-top:2px;
+}
+.pitch-role{
+  font-size:8px;font-weight:800;padding:1px 4px;border-radius:3px;
+  margin-top:3px;display:inline-block;letter-spacing:.3px;
+}
 .pitch-empty-slot{
-  width:54px;height:72px;border-radius:7px;
-  border:1.5px dashed rgba(255,255,255,.18);
+  width:60px;height:80px;border-radius:8px;
+  border:1.5px dashed rgba(255,255,255,.2);
   display:flex;align-items:center;justify-content:center;
-  font-size:9px;color:rgba(255,255,255,.25);font-weight:600;
+  font-size:9px;color:rgba(255,255,255,.3);font-weight:600;
   background:rgba(255,255,255,.03);transition:.2s;
+  cursor:default;
 }
 .pitch-empty-slot.drop-target{
-  border-color:rgba(35,209,139,.6);background:rgba(35,209,139,.08);color:var(--green);
+  border-color:rgba(35,209,139,.7);background:rgba(35,209,139,.1);color:var(--green);
 }
 
 /* Subs bar */
@@ -931,18 +964,18 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font-b);font-size:15
   color:var(--t3);margin-bottom:8px;display:flex;align-items:center;gap:8px;
 }
 .field-subs-label::after{content:'';flex:1;height:1px;background:var(--border);}
-.field-subs-row{display:flex;gap:8px;flex-wrap:wrap;}
 .field-sub-card{
-  display:flex;align-items:center;gap:6px;padding:6px 10px;
+  display:flex;align-items:center;gap:7px;padding:7px 10px;
   background:var(--bg3);border:1px solid var(--border);border-radius:8px;
   cursor:grab;transition:.15s;min-width:0;
 }
-.field-sub-card:hover{border-color:var(--border2);}
-.field-sub-card.dragging{opacity:.4;}
+.field-sub-card:hover{border-color:var(--border2);background:var(--bg4);}
+.field-sub-card.dragging{opacity:.35;pointer-events:none;}
 .field-sub-card.drag-over{border-color:var(--green);background:var(--green-d);}
 .field-sub-card-info{min-width:0;}
-.field-sub-card-name{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px;}
-.field-sub-card-meta{font-size:10px;color:var(--t3);}
+.field-sub-card-name{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px;}
+.field-sub-card-meta{font-size:10px;color:var(--t3);margin-top:1px;}
+.field-subs-row{display:flex;gap:8px;flex-wrap:wrap;min-height:42px;}
 
 /* ─── SQUAD TABS ─── */
 .squad-tabs{display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid var(--border2);margin-bottom:20px;}
@@ -4067,11 +4100,14 @@ function renderFieldView() {
   const out      = sortSquadPlayers(squad.players.filter(p => p.group==='out'));
 
   const formation = parseFormation(getSquad(sv).tactic);
-  const pitchH    = Math.max(420, Math.min(600, canvas.offsetWidth * 1.35));
-  canvas.style.height = pitchH + 'px';
+  // height is set via aspect-ratio CSS — no JS height needed
 
   // Remove old pitch players
   canvas.querySelectorAll('.pitch-player').forEach(el => el.remove());
+
+  // Canvas dragover fallback
+  canvas.ondragover = e => e.preventDefault();
+  canvas.ondrop     = e => { e.preventDefault(); }; // drop on empty canvas = no-op
 
   // Place starters on pitch using formation layout
   if (formation) {
@@ -4153,18 +4189,21 @@ function addPitchDragEvents(el) {
   el.addEventListener('dragstart', e => {
     fieldDragPid    = el.dataset.pid;
     fieldDragSource = el.dataset.group || 'starter';
-    el.querySelector('.pitch-card')?.classList.add('dragging');
+    el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
   });
   el.addEventListener('dragend', () => {
-    el.querySelector('.pitch-card')?.classList.remove('dragging');
+    el.classList.remove('dragging');
     fieldDragPid = null; fieldDragSource = null;
-    document.querySelectorAll('.drop-target').forEach(x => x.classList.remove('drop-target'));
+    document.querySelectorAll('.drop-target,.drag-over').forEach(x => {
+      x.classList.remove('drop-target'); x.classList.remove('drag-over');
+    });
   });
-  el.addEventListener('dragover', e => { e.preventDefault(); el.querySelector('.pitch-card')?.classList.add('drop-target'); });
-  el.addEventListener('dragleave', () => el.querySelector('.pitch-card')?.classList.remove('drop-target'));
+  el.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); el.querySelector('.pitch-card')?.classList.add('drop-target'); });
+  el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.querySelector('.pitch-card')?.classList.remove('drop-target'); });
   el.addEventListener('drop', e => {
     e.preventDefault();
+    e.stopPropagation();
     el.querySelector('.pitch-card')?.classList.remove('drop-target');
     if (!fieldDragPid || fieldDragPid === el.dataset.pid) return;
     doFieldSwap(fieldDragPid, fieldDragSource, el.dataset.pid, el.dataset.group || 'starter');
@@ -4248,11 +4287,16 @@ function setupViewToggle() {
     btn.addEventListener('click', () => {
       currentView = btn.dataset.view;
       document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
-      document.getElementById('list-view').style.display  = currentView === 'list'  ? '' : 'none';
-      document.getElementById('field-view').style.display = currentView === 'field' ? '' : 'none';
-      if (currentView === 'field') {
-        // Small delay so layout is computed before pitch height calc
-        requestAnimationFrame(() => renderFieldView());
+      const listEl  = document.getElementById('list-view');
+      const fieldEl = document.getElementById('field-view');
+      if (currentView === 'list') {
+        fieldEl.style.display = 'none';
+        listEl.style.display  = '';
+      } else {
+        listEl.style.display  = 'none';
+        fieldEl.style.display = 'block';
+        // Double rAF ensures layout is computed after display change
+        requestAnimationFrame(() => requestAnimationFrame(() => renderFieldView()));
       }
     });
   });
